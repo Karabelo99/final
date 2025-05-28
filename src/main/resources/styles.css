@@ -1,0 +1,80 @@
+/* Global Styles */
+.root {
+    -fx-font-family: 'Segoe UI', sans-serif;
+    -fx-base: #f4f4f4;
+}
+
+/* Header Styling */
+.header {
+    -fx-background-color: linear-gradient(to right, #1a73e8, #34a853);
+    -fx-padding: 10 20;
+    -fx-alignment: center-left;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 10, 0.5, 0, 5);
+}
+
+.header .label {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+}
+
+/* Profile Button Styling */
+.button-secondary {
+    -fx-background-color: #f1f3f4;
+    -fx-text-fill: #202124;
+    -fx-background-radius: 4;
+    -fx-padding: 8 16;
+    -fx-font-size: 14px;
+    -fx-cursor: hand;
+}
+
+.button-secondary:hover {
+    -fx-background-color: #e8f0fe;
+    -fx-text-fill: #1a73e8;
+}
+
+/* Stats Container Styling */
+.stats-container {
+    -fx-padding: 20;
+    -fx-spacing: 20;
+    -fx-alignment: center;
+}
+
+.stats-card {
+    -fx-background-color: white;
+    -fx-background-radius: 8;
+    -fx-padding: 15;
+    -fx-pref-width: 200;
+    -fx-alignment: center;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 5, 0.5, 0, 5);
+}
+
+.stats-card .label {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+.stats-card .value {
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #1a73e8;
+}
+
+/* Tab Pane Styling */
+.tab-pane {
+    -fx-background-color: white;
+    -fx-background-radius: 8;
+    -fx-padding: 10;
+    -fx-spacing: 10;
+}
+
+.tab {
+    -fx-background-color: #ffffff;
+    -fx-background-insets: 0;
+    -fx-text-fill: #202124;
+}
+
+.tab:selected {
+    -fx-background-color: #e8f0fe;
+    -fx-text-fill: #1a73e8;
+}

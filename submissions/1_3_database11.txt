@@ -1,0 +1,163 @@
+const express = require('express');
+const cors = require('cors');
+const { MongoClient } = require('mongodb');
+const { v4: uuidv4 } = require('uuid');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// MongoDB Configuration
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const DB_NAME = 'online_shop';
+
+// Middleware
+const corsOptions = {
+  origin: 'http://localhost:5173',
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// MongoDB Connection
+let db, client;
+
+async function connectToDatabase() {
+  try {
+    client = new MongoClient(MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      useUnifiedTopology: true
+    });
+    await client.connect();
+    db = client.db(DB_NAME);
+    console.log('Connected to MongoDB');
+    
+    // Create collections if they don't exist
+    await db.createCollection('orders').catch(() => console.log('orders collection already exists'));
+    await db.createCollection('order_items').catch(() => console.log('order_items collection already exists'));
+    
+    // Create indexes
+    await db.collection('orders').createIndex({ 'customer.name': 1 });
+    await db.collection('orders').createIndex({ status: 1 });
+    await db.collection('order_items').createIndex({ order_id: 1 });
+
+    console.log('Database setup complete');
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    process.exit(1);
+  }
+}
+
+// Create new order endpoint
+app.post('/api/orders', async (req, res) => {
+  try {
+    const orderData = req.body;
+
+    // Validate required fields
+    if (!orderData.items || orderData.items.length === 0) {
+      return res.status(400).json({ message: 'Order must contain items' });
+    }
+    if (!orderData.customer?.name || !orderData.shippingAddress?.address) {
+      return res.status(400).json({ message: 'Customer name and shipping address are required' });
+    }
+
+    // Generate order ID and date
+    const orderId = uuidv4();
+    const orderDate = new Date();
+
+    // Create order document
+    const orderDoc = {
+      _id: orderId,
+      customer: {
+        name: orderData.customer.name,
+        email: orderData.customer.email || null,
+        phone: orderData.customer.phone || null
+      },
+      shippingAddress: {
+        address: orderData.shippingAddress.address,
+        city: orderData.shippingAddress.city || null,
+        state: orderData.shippingAddress.state || null,
+        zip: orderData.shippingAddress.zip || null
+      },
+      paymentMethod: orderData.paymentMethod,
+      subtotal: orderData.subtotal || 0,
+      tax: orderData.tax || 0,
+      discountAmount: orderData.discountAmount || 0,
+      shipping: orderData.shipping || 0,
+      total: orderData.total || 0,
+      status: 'Processing',
+      orderDate,
+      trackingNumber: `TRACK-${Math.floor(100000 + Math.random() * 900000)}`,
+      notes: orderData.notes || null
+    };
+
+    // Insert order
+    await db.collection('orders').insertOne(orderDoc);
+
+    // Create order items
+    const orderItems = orderData.items.map(item => ({
+      _id: uuidv4(),
+      order_id: orderId,
+      product_id: item.id,
+      product_name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      item_total: item.price * item.quantity
+    }));
+
+    await db.collection('order_items').insertMany(orderItems);
+
+    // Return simplified order data
+    res.status(201).json({
+      id: orderId,
+      status: 'Processing',
+      trackingNumber: orderDoc.trackingNumber,
+      customer: orderDoc.customer,
+      total: orderDoc.total
+    });
+  } catch (error) {
+    console.error('Order creation error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Internal server error', error: error.message });
+    }
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.stack);
+  if (!res.headersSent) {
+    res.status(500).json({
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+// Initialize and start server
+connectToDatabase()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch(error => {
+    console.error('Failed to initialize database:', error);
+    process.exit(1);
+  });
+
+// Cleanup on exit
+process.on('SIGINT', async () => {
+  try {
+    if (client) {
+      await client.close();
+      console.log('MongoDB connection closed');
+    }
+    process.exit(0);
+  } catch (err) {
+    console.error('Error closing MongoDB connection:', err);
+    process.exit(1);
+  }
+});
+ server.js 
+
+checkout.jsx
