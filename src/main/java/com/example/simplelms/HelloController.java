@@ -8,6 +8,7 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.*;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
@@ -21,6 +22,7 @@ import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.stage.FileChooser;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -40,7 +42,22 @@ import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.util.Duration;
+import javafx.util.Pair;
 import javafx.util.StringConverter;
+
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.layout.Document;
+import com.itextpdf.layout.element.Paragraph;
+import com.itextpdf.kernel.pdf.PdfDocument;
+
+import java.io.FileNotFoundException;
+import java.awt.print.PrinterJob;
+import java.awt.print.Printable;
+import java.awt.print.PageFormat;
+import java.awt.Graphics;
+
+import static org.postgresql.PGProperty.PASSWORD;
+import static org.postgresql.jdbc.EscapedFunctions.USER;
 
 public class HelloController extends Application {
     // UI Components
@@ -70,11 +87,12 @@ public class HelloController extends Application {
     private ObservableList<Assignment> assignments = FXCollections.observableArrayList();
     private ObservableList<Course> courses = FXCollections.observableArrayList();
     private ObservableList<Course> lecturerCourses = FXCollections.observableArrayList();
-
+    private String selectedCourseCode;
     // Database configuration
-    private static final String DB_URL = "jdbc:postgresql://localhost:5432/Learning_management";
-    private static final String DB_USER = "postgres";
-    private static final String DB_PASSWORD = "karabelo";
+    private static final String DB_URL = "jdbc:postgresql://ep-lively-bush-a8n03ooe-pooler.eastus2.azure.neon.tech/Learning_management";
+    private static final String DB_USER = "Learning_management_owner";
+    private static final String DB_PASSWORD = "npg_9l8oIXPDaYMO";
+
 
     @Override
     public void start(Stage primaryStage) {
@@ -101,152 +119,276 @@ public class HelloController extends Application {
         primaryStage.setScene(scene);
         primaryStage.show();
     }
-
     private void initializeDatabase() {
         try (Connection conn = getConnection()) {
-            // Create tables if they don't exist
             Statement stmt = conn.createStatement();
-
-            // Courses table
+            // Create MCQ questions table
             stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS courses (" +
-                            "course_code VARCHAR(20) PRIMARY KEY, " +
-                            "course_name VARCHAR(100) NOT NULL, " +
-                            "teacher VARCHAR(100) NOT NULL, " +
-                            "progress INTEGER DEFAULT 0)"
-            );
-
-            // Enrollments table
-            stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS enrollments (" +
+                    "CREATE TABLE IF NOT EXISTS mcq_questions (" +
                             "id SERIAL PRIMARY KEY, " +
-                            "student_id INTEGER NOT NULL, " +
-                            "course_code VARCHAR(20) NOT NULL, " +
-                            "enrollment_date DATE NOT NULL, " +
+                            "question_text TEXT NOT NULL, " +
+                            "course_code VARCHAR(10), " +
+                            "created_by INTEGER NOT NULL, " +
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                             "FOREIGN KEY (course_code) REFERENCES courses(course_code), " +
-                            "UNIQUE (student_id, course_code))"
+                            "FOREIGN KEY (created_by) REFERENCES users(id))"
             );
-
-            // Assignments table
+// Create student_transcripts table
             stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS assignments (" +
+                    "CREATE TABLE IF NOT EXISTS student_transcripts (" +
                             "id SERIAL PRIMARY KEY, " +
-                            "title VARCHAR(100) NOT NULL, " +
-                            "description TEXT, " +
-                            "instructions TEXT, " +
-                            "due_date DATE NOT NULL, " +
-                            "course_code VARCHAR(20) NOT NULL, " +
-                            "max_points INTEGER DEFAULT 100, " +
-                            "grading_criteria TEXT, " +
-                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
-            );
-
-            // Course materials table
-            stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS course_materials (" +
-                            "id SERIAL PRIMARY KEY, " +
-                            "title VARCHAR(100) NOT NULL, " +
-                            "file_path TEXT NOT NULL, " +
-                            "course_code VARCHAR(20) NOT NULL, " +
-                            "upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
-            );
-
-            // Announcements table
-            stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS announcements (" +
-                            "id SERIAL PRIMARY KEY, " +
-                            "title VARCHAR(100) NOT NULL, " +
-                            "content TEXT NOT NULL, " +
-                            "date DATE NOT NULL, " +
-                            "assignment_id INTEGER, " +
-                            "course_code VARCHAR(20), " +
-                            "FOREIGN KEY (assignment_id) REFERENCES assignments(id), " +
-                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
-            );
-
-            // Submissions table
-            stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS submissions (" +
-                            "id SERIAL PRIMARY KEY, " +
-                            "assignment_id INTEGER NOT NULL, " +
                             "student_id INTEGER NOT NULL, " +
-                            "file_path TEXT NOT NULL, " +
-                            "submission_date TIMESTAMP NOT NULL, " +
-                            "grade INTEGER, " +
-                            "feedback TEXT, " +
-                            "published BOOLEAN DEFAULT FALSE, " +
-                            "publish_date TIMESTAMP, " +
-                            "last_notified TIMESTAMP, " +
-                            "FOREIGN KEY (assignment_id) REFERENCES assignments(id), " +
-                            "UNIQUE (assignment_id, student_id))"
+                            "transcript_content TEXT NOT NULL, " +
+                            "generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "last_viewed TIMESTAMP, " +
+                            "FOREIGN KEY (student_id) REFERENCES users(id))"
             );
-
-            // Student notifications table
+            // Create MCQ options table
             stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS student_notifications (" +
-                            "student_id INTEGER PRIMARY KEY, " +
-                            "last_checked TIMESTAMP NOT NULL)"
+                    "CREATE TABLE IF NOT EXISTS mcq_options (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "question_id INTEGER NOT NULL, " +
+                            "option_text TEXT NOT NULL, " +
+                            "is_correct BOOLEAN DEFAULT FALSE, " +
+                            "FOREIGN KEY (question_id) REFERENCES mcq_questions(id) ON DELETE CASCADE)"
+            );stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS mcq_student_answers (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "student_id INTEGER NOT NULL, " +
+                            "question_id INTEGER NOT NULL, " +
+                            "option_id INTEGER NOT NULL, " +
+                            "answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "FOREIGN KEY (student_id) REFERENCES users(id), " +
+                            "FOREIGN KEY (question_id) REFERENCES mcq_questions(id), " +
+                            "FOREIGN KEY (option_id) REFERENCES mcq_options(id))"
             );
 
-            // Add some default courses if they don't exist
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM courses");
+            // Create forum categories table
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS forum_categories (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "name VARCHAR(100) NOT NULL, " +
+                            "description TEXT, " +
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            );
+
+            // Create forum posts table
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS forum_posts (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "category_id INTEGER NOT NULL, " +
+                            "user_id INTEGER NOT NULL, " +
+                            "title VARCHAR(200) NOT NULL, " +
+                            "content TEXT NOT NULL, " +
+                            "media_path TEXT, " +
+                            "media_type VARCHAR(50), " +
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "FOREIGN KEY (category_id) REFERENCES forum_categories(id), " +
+                            "FOREIGN KEY (user_id) REFERENCES users(id))"
+            );
+
+            // Create forum comments table
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS forum_comments (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "post_id INTEGER NOT NULL, " +
+                            "user_id INTEGER NOT NULL, " +
+                            "content TEXT NOT NULL, " +
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "FOREIGN KEY (post_id) REFERENCES forum_posts(id), " +
+                            "FOREIGN KEY (user_id) REFERENCES users(id))"
+            );
+
+            // Create reports table (fixed missing parenthesis)
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS reports (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "student_id INTEGER NOT NULL, " +
+                            "course_code VARCHAR(10) NOT NULL, " +
+                            "report_content TEXT, " +
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "FOREIGN KEY (student_id) REFERENCES users(id), " +
+                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
+            );
+
+            // Create certifications table (fixed missing parenthesis)
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS certifications (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "student_id INTEGER NOT NULL, " +
+                            "course_code VARCHAR(10) NOT NULL, " +
+                            "certification_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                            "FOREIGN KEY (student_id) REFERENCES users(id), " +
+                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
+            );
+
+            // Create transcripts table (fixed missing parenthesis)
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS transcripts (" +
+                            "id SERIAL PRIMARY KEY, " +
+                            "student_id INTEGER NOT NULL, " +
+                            "course_code VARCHAR(10) NOT NULL, " +
+                            "grade INTEGER, " +
+                            "FOREIGN KEY (student_id) REFERENCES users(id), " +
+                            "FOREIGN KEY (course_code) REFERENCES courses(course_code))"
+            );
+
+            // Add default forum categories if they don't exist
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM forum_categories");
             rs.next();
             if (rs.getInt(1) == 0) {
-                String[][] defaultCourses = {
-                        {"CS101", "Introduction to Computer Science", "Dr. Motletle"},
-                        {"MATH201", "Advanced Mathematics", "Prof. Kiddah"},
-                        {"ENG102", "English Composition", "Dr. Motletle"}
-                };
-
-                for (String[] course : defaultCourses) {
-                    stmt.executeUpdate(
-                            "INSERT INTO courses (course_code, course_name, teacher) VALUES " +
-                                    "('" + course[0] + "', '" + course[1] + "', '" + course[2] + "')"
-                    );
-                }
+                stmt.executeUpdate(
+                        "INSERT INTO forum_categories (name, description) VALUES " +
+                                "('General Discussion', 'Discuss anything related to the LMS'), " +
+                                "('Course Questions', 'Ask questions about specific courses'), " +
+                                "('Technical Support', 'Get help with technical issues')"
+                );
             }
 
         } catch (SQLException e) {
             showAlert("Error", "Failed to initialize database: " + e.getMessage());
+            e.printStackTrace();
         }
     }
-
     private void addGlobalStyles(Scene scene) {
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
     }
+    private void generateReport(int studentId) {
+        StringBuilder reportContent = new StringBuilder();
+        reportContent.append("Report for Student ID: ").append(studentId).append("\n\n");
 
+        try (Connection conn = getConnection()) {
+            // Fetch courses
+            String coursesQuery = "SELECT c.course_code, c.course_name FROM courses c " +
+                    "JOIN enrollments e ON c.course_code = e.course_code " +
+                    "WHERE e.student_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(coursesQuery)) {
+                pstmt.setInt(1, studentId);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    String courseCode = rs.getString("course_code");
+                    String courseName = rs.getString("course_name");
+                    reportContent.append("Course: ").append(courseName).append(" (").append(courseCode).append(")\n");
+
+                    // Fetch assignments and grades for the course
+                    String assignmentsQuery = "SELECT a.title, t.grade FROM assignments a " +
+                            "JOIN transcripts t ON a.id = t.assignment_id " +
+                            "WHERE t.student_id = ? AND a.course_code = ?";
+                    try (PreparedStatement assignmentStmt = conn.prepareStatement(assignmentsQuery)) {
+                        assignmentStmt.setInt(1, studentId);
+                        assignmentStmt.setString(2, courseCode);
+                        ResultSet assignmentRs = assignmentStmt.executeQuery();
+
+                        while (assignmentRs.next()) {
+                            String assignmentTitle = assignmentRs.getString("title");
+                            int grade = assignmentRs.getInt("grade");
+                            reportContent.append("  Assignment: ").append(assignmentTitle)
+                                    .append(" - Grade: ").append(grade).append("\n");
+                        }
+                    }
+                    reportContent.append("\n"); // Add space between courses
+                }
+            }
+
+            // Save to database
+            saveReportToDatabase(studentId, reportContent.toString());
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to generate report: " + e.getMessage());
+        }
+    }
+
+
+
+    private void saveReportToDatabase(int studentId, String reportContent) {
+        // Insert report into the reports table
+        try (Connection conn = getConnection()) {
+            String query = "INSERT INTO reports (student_id, report_content) VALUES (?, ?)";
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setInt(1, studentId);
+                pstmt.setString(2, reportContent);
+                pstmt.executeUpdate();
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to save report: " + e.getMessage());
+        }
+    }
+    private void issueCertification(int studentId, String courseCode) {
+        try (Connection conn = getConnection()) {
+            String query = "INSERT INTO certifications (student_id, course_code) VALUES (?, ?)";
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setInt(1, studentId);
+                pstmt.setString(2, courseCode);
+                pstmt.executeUpdate();
+            }
+            showAlert("Success", "Certification issued for course: " + courseCode);
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to issue certification: " + e.getMessage());
+        }
+    }
+    private Map<String, Integer> calculateClassPerformance(String courseCode) {
+        Map<String, Integer> performanceMetrics = new HashMap<>();
+        int totalScore = 0;
+        int totalSubmissions = 0;
+
+        try (Connection conn = getConnection()) {
+            // Calculate average score and total submissions
+            String query = "SELECT grade FROM transcripts WHERE course_code = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    int grade = rs.getInt("grade");
+                    totalScore += grade;
+                    totalSubmissions++;
+                }
+            }
+
+            // Calculate average
+            int averageScore = totalSubmissions == 0 ? 0 : totalScore / totalSubmissions;
+            performanceMetrics.put("Average Score", averageScore);
+            performanceMetrics.put("Total Submissions", totalSubmissions);
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to calculate class performance: " + e.getMessage());
+        }
+
+        return performanceMetrics;
+    }
     private void initializeLecturerAccounts() {
         try (Connection conn = getConnection()) {
-            String[][] lecturers = {
-                    {"Dr. Motletle", "motletle@university.edu", "kmotletle", "prof123"},
-                    {"Prof. Kiddah", "kiddah@university.edu", "rkiddah", "teach400"},
-                    {"Ratsebe", "ratsebe@university.edu", "ratsebe", "ratsebek"}
+            String[][] accounts = {
+                    // Lecturers
+                    {"Dr. Motletle", "motletle@university.edu", "kmotletle", "prof123", "lecturer"},
+                    {"Prof. Kiddah", "kiddah@university.edu", "rkiddah", "teach400", "lecturer"},
+                    {"Ratsebe", "ratsebe@university.edu", "ratsebe", "ratsebek", "lecturer"},
+                    // Manager
+                    {"Admin Manager", "manager@university.edu", "admin", "admin123", "manager"}
             };
 
-            for (String[] lecturer : lecturers) {
+            for (String[] account : accounts) {
                 String checkQuery = "SELECT id FROM users WHERE username = ?";
                 try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
-                    checkStmt.setString(1, lecturer[2]);
+                    checkStmt.setString(1, account[2]);
                     ResultSet rs = checkStmt.executeQuery();
                     if (!rs.next()) {
                         String insertQuery = "INSERT INTO users (full_name, email, username, password, role) " +
-                                "VALUES (?, ?, ?, ?, 'lecturer')";
+                                "VALUES (?, ?, ?, ?, ?)";
                         try (PreparedStatement insertStmt = conn.prepareStatement(insertQuery)) {
-                            insertStmt.setString(1, lecturer[0]);
-                            insertStmt.setString(2, lecturer[1]);
-                            insertStmt.setString(3, lecturer[2]);
-                            insertStmt.setString(4, lecturer[3]);
+                            insertStmt.setString(1, account[0]);
+                            insertStmt.setString(2, account[1]);
+                            insertStmt.setString(3, account[2]);
+                            insertStmt.setString(4, account[3]);
+                            insertStmt.setString(5, account[4]);
                             insertStmt.executeUpdate();
                         }
                     }
                 }
             }
         } catch (SQLException e) {
-            showAlert("Error", "Failed to initialize lecturer accounts: " + e.getMessage());
+            showAlert("Error", "Failed to initialize accounts: " + e.getMessage());
         }
     }
-
     private Connection getConnection() throws SQLException {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
@@ -292,12 +434,10 @@ public class HelloController extends Application {
         Label roleLabel = new Label("Role:");
         roleLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2a60b9;");
 
-        // Create role combo box
+        // Role ComboBox
         ComboBox<String> roleComboBox = new ComboBox<>();
-        roleComboBox.getItems().addAll("Student", "Lecturer");
-        roleComboBox.setValue("Student");  // default selection
-
-        // Style combo box (blue themed)
+        roleComboBox.getItems().addAll("Student", "Lecturer", "Manager");
+        roleComboBox.setValue("Student");
         roleComboBox.setStyle(
                 "-fx-background-color: #e3f0ff;" +
                         "-fx-border-color: #5a9bf6;" +
@@ -308,18 +448,7 @@ public class HelloController extends Application {
                         "-fx-text-fill: #1a3c72;"
         );
 
-        // Add focus effect on combo box (blue glow)
-        roleComboBox.focusedProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal) {
-                roleComboBox.setEffect(new DropShadow(10, Color.web("#1e90ff")));
-                roleComboBox.setStyle(roleComboBox.getStyle() + "-fx-border-color: #1e90ff;");
-            } else {
-                roleComboBox.setEffect(null);
-                roleComboBox.setStyle(roleComboBox.getStyle().replace("-fx-border-color: #1e90ff;", "-fx-border-color: #5a9bf6;"));
-            }
-        });
-
-        // Style text fields with blue background and border
+        // Username Field with fixed focus effect
         usernameField.setStyle(
                 "-fx-background-color: #e3f0ff;" +
                         "-fx-border-color: #5a9bf6;" +
@@ -329,18 +458,6 @@ public class HelloController extends Application {
                         "-fx-font-size: 14px;" +
                         "-fx-text-fill: #1a3c72;"
         );
-
-        passwordField.setStyle(
-                "-fx-background-color: #e3f0ff;" +
-                        "-fx-border-color: #5a9bf6;" +
-                        "-fx-border-radius: 5px;" +
-                        "-fx-background-radius: 5px;" +
-                        "-fx-padding: 8 10 8 10;" +
-                        "-fx-font-size: 14px;" +
-                        "-fx-text-fill: #1a3c72;"
-        );
-
-        // Add focus effect on text fields: blue glow
         usernameField.focusedProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal) {
                 usernameField.setEffect(new DropShadow(10, Color.web("#1e90ff")));
@@ -351,6 +468,16 @@ public class HelloController extends Application {
             }
         });
 
+        // Password Field with fixed focus effect
+        passwordField.setStyle(
+                "-fx-background-color: #e3f0ff;" +
+                        "-fx-border-color: #5a9bf6;" +
+                        "-fx-border-radius: 5px;" +
+                        "-fx-background-radius: 5px;" +
+                        "-fx-padding: 8 10 8 10;" +
+                        "-fx-font-size: 14px;" +
+                        "-fx-text-fill: #1a3c72;"
+        );
         passwordField.focusedProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal) {
                 passwordField.setEffect(new DropShadow(10, Color.web("#1e90ff")));
@@ -364,17 +491,15 @@ public class HelloController extends Application {
         // Add controls to grid
         loginForm.add(usernameLabel, 0, 0);
         loginForm.add(usernameField, 1, 0);
-
         loginForm.add(passwordLabel, 0, 1);
         loginForm.add(passwordField, 1, 1);
-
         loginForm.add(roleLabel, 0, 2);
         loginForm.add(roleComboBox, 1, 2);
 
         HBox buttonBox = new HBox(10);
         buttonBox.setAlignment(Pos.CENTER);
 
-        // Style login button (blue)
+        // Login Button
         loginButton.setStyle(
                 "-fx-background-color: #1e90ff;" +
                         "-fx-text-fill: white;" +
@@ -385,13 +510,12 @@ public class HelloController extends Application {
                         "-fx-font-size: 14px;"
         );
         addButtonHoverEffect(loginButton, "#1e90ff", "#0f74e0");
-
         loginButton.setOnAction(e -> {
             String selectedRole = roleComboBox.getValue();
-            handleLogin(selectedRole); // Modify your handleLogin to accept role if needed
+            handleLogin(selectedRole);
         });
 
-        // Style register button (green)
+        // Register Button
         Button registerButton = new Button("Register Student");
         registerButton.setStyle(
                 "-fx-background-color: #28a745;" +
@@ -403,21 +527,18 @@ public class HelloController extends Application {
                         "-fx-font-size: 14px;"
         );
         addButtonHoverEffect(registerButton, "#28a745", "#1e7e34");
-
         registerButton.setOnAction(e -> showRegistrationForm());
 
         buttonBox.getChildren().addAll(loginButton, registerButton);
         loginForm.add(buttonBox, 0, 3, 2, 1);
 
-        // Style error label
+        // Error Label
         errorLabel.setStyle("-fx-text-fill: #d9534f; -fx-font-weight: bold; -fx-font-size: 13px;");
 
         loginContainer.setAlignment(Pos.CENTER);
         loginContainer.setSpacing(20);
         loginContainer.getChildren().addAll(title, loginForm, errorLabel);
     }
-
-
     // Helper method to add hover effects on buttons
     private void addButtonHoverEffect(Button button, String baseColor, String hoverColor) {
         button.setOnMouseEntered(e -> button.setStyle(
@@ -429,6 +550,7 @@ public class HelloController extends Application {
                         "-fx-cursor: hand;" +
                         "-fx-font-size: 14px;"
         ));
+
         button.setOnMouseExited(e -> button.setStyle(
                 "-fx-background-color: " + baseColor + ";" +
                         "-fx-text-fill: white;" +
@@ -439,7 +561,6 @@ public class HelloController extends Application {
                         "-fx-font-size: 14px;"
         ));
     }
-
 
     private void showRegistrationForm() {
         Stage registrationStage = new Stage();
@@ -935,6 +1056,8 @@ public class HelloController extends Application {
                         loginAsStudent();
                     } else if ("lecturer".equals(role)) {
                         loginAsLecturer();
+                    } else if ("manager".equals(role)) {
+                        loginAsManager();
                     }
                 } else {
                     errorLabel.setText("Invalid username or password");
@@ -945,6 +1068,286 @@ public class HelloController extends Application {
         }
     }
 
+    private void loginAsManager() {
+        welcomeLabel.setText("Welcome, " + fullName + " (Manager)");
+        setupManagerDashboard();
+        root.setCenter(mainContainer);
+        mainContainer.getChildren().setAll(studentDashboard); // Reusing studentDashboard container
+    }
+
+    private void setupManagerDashboard() {
+        studentDashboard.getChildren().clear();
+        studentDashboard.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 20;");
+
+        // Header
+        HBox header = new HBox();
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.setSpacing(10);
+        header.setPadding(new Insets(15));
+        header.setStyle("-fx-background-color: white; -fx-background-radius: 10; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0.5, 0, 3);");
+
+        welcomeLabel.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #333;");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button logoutButton = new Button("Logout");
+        logoutButton.setOnAction(e -> handleLogout());
+
+        header.getChildren().addAll(welcomeLabel, spacer, logoutButton);
+
+        // TabPane for manager functions
+        TabPane managerTabPane = new TabPane();
+
+        // Transcripts Tab
+        Tab transcriptsTab = new Tab("Generate Transcripts");
+        setupTranscriptsTab(transcriptsTab);
+
+        // Certificates Tab
+        Tab certificatesTab = new Tab("Issue Certificates");
+        setupCertificatesTab(certificatesTab);
+
+        // Reports Tab
+        Tab reportsTab = new Tab("Generate Reports");
+        setupReportsTab(reportsTab);
+
+        managerTabPane.getTabs().addAll(transcriptsTab, certificatesTab, reportsTab);
+
+        studentDashboard.getChildren().addAll(header, managerTabPane);
+    }
+
+    private void setupTranscriptsTab(Tab tab) {
+        VBox content = new VBox(20);
+        content.setPadding(new Insets(20));
+
+        Label title = new Label("Generate Student Transcripts");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        // Student selection
+        ComboBox<Student> studentCombo = new ComboBox<>();
+        studentCombo.setPromptText("Select a student");
+        try {
+            List<Student> students = DatabaseUtil.executeQuery(
+                    "SELECT id, full_name FROM users WHERE role = 'student' ORDER BY full_name",
+                    pstmt -> {
+                        ResultSet rs = pstmt.executeQuery();
+                        List<Student> results = new ArrayList<>();
+                        while (rs.next()) {
+                            results.add(new Student(rs.getInt("id"), rs.getString("full_name")));
+                        }
+                        return results;
+                    }
+            );
+            studentCombo.getItems().addAll(students);
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load students: " + e.getMessage());
+        }
+
+        // Generate button
+        Button generateBtn = new Button("Generate Transcript");
+        generateBtn.setOnAction(e -> {
+            Student selected = studentCombo.getValue();
+            if (selected != null) {
+                generateTranscript(selected.getId());
+            } else {
+                showAlert("Error", "Please select a student");
+            }
+        });
+
+        content.getChildren().addAll(title, new Label("Select Student:"), studentCombo, generateBtn);
+        tab.setContent(content);
+    }
+
+    private void setupCertificatesTab(Tab tab) {
+        VBox content = new VBox(20);
+        content.setPadding(new Insets(20));
+
+        Label title = new Label("Issue Certificates");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        // Student selection
+        ComboBox<Student> studentCombo = new ComboBox<>();
+        studentCombo.setPromptText("Select a student");
+
+        // Course selection
+        ComboBox<Course> courseCombo = new ComboBox<>();
+        courseCombo.setPromptText("Select a course");
+
+        // Load students and courses
+        try {
+            // Load students
+            List<Student> students = DatabaseUtil.executeQuery(
+                    "SELECT id, full_name FROM users WHERE role = 'student' ORDER BY full_name",
+                    pstmt -> {
+                        ResultSet rs = pstmt.executeQuery();
+                        List<Student> results = new ArrayList<>();
+                        while (rs.next()) {
+                            results.add(new Student(rs.getInt("id"), rs.getString("full_name")));
+                        }
+                        return results;
+                    }
+            );
+            studentCombo.getItems().addAll(students);
+
+            // Load courses
+            List<Course> courses = DatabaseUtil.executeQuery(
+                    "SELECT course_code, course_name FROM courses ORDER BY course_name",
+                    pstmt -> {
+                        ResultSet rs = pstmt.executeQuery();
+                        List<Course> results = new ArrayList<>();
+                        while (rs.next()) {
+                            results.add(new Course(rs.getString("course_code"), rs.getString("course_name"), "", 0));
+                        }
+                        return results;
+                    }
+            );
+            courseCombo.getItems().addAll(courses);
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load data: " + e.getMessage());
+        }
+
+        // Issue button
+        Button issueBtn = new Button("Issue Certificate");
+        issueBtn.setOnAction(e -> {
+            Student student = studentCombo.getValue();
+            Course course = courseCombo.getValue();
+            if (student != null && course != null) {
+                issueCertification(student.getId(), course.getCourseCode());
+            } else {
+                showAlert("Error", "Please select both student and course");
+            }
+        });
+
+        content.getChildren().addAll(
+                title,
+                new Label("Select Student:"), studentCombo,
+                new Label("Select Course:"), courseCombo,
+                issueBtn
+        );
+        tab.setContent(content);
+    }
+    class Student {
+        private final int id;
+        private final String name;
+
+        public Student(int id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+
+        public int getId() { return id; }
+        public String getName() { return name; }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    private void setupReportsTab(Tab tab) {
+        VBox content = new VBox(20);
+        content.setPadding(new Insets(20));
+
+        Label title = new Label("Generate Course Reports");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        // Course selection
+        ComboBox<Course> courseCombo = new ComboBox<>();
+        courseCombo.setPromptText("Select a course");
+        try {
+            List<Course> courses = DatabaseUtil.executeQuery(
+                    "SELECT course_code, course_name FROM courses ORDER BY course_name",
+                    pstmt -> {
+                        ResultSet rs = pstmt.executeQuery();
+                        List<Course> results = new ArrayList<>();
+                        while (rs.next()) {
+                            results.add(new Course(rs.getString("course_code"), rs.getString("course_name"), "", 0));
+                        }
+                        return results;
+                    }
+            );
+            courseCombo.getItems().addAll(courses);
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load courses: " + e.getMessage());
+        }
+
+        // Generate button
+        Button generateBtn = new Button("Generate Report");
+        generateBtn.setOnAction(e -> {
+            Course course = courseCombo.getValue();
+            if (course != null) {
+                generateCourseReport(course.getCourseCode());
+            } else {
+                showAlert("Error", "Please select a course");
+            }
+        });
+
+        content.getChildren().addAll(title, new Label("Select Course:"), courseCombo, generateBtn);
+        tab.setContent(content);
+    }
+
+    private void generateCourseReport(String courseCode) {
+        try (Connection conn = getConnection()) {
+            // Get course info
+            String courseQuery = "SELECT course_name, teacher FROM courses WHERE course_code = ?";
+            String courseName = "";
+            String teacher = "";
+
+            try (PreparedStatement pstmt = conn.prepareStatement(courseQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+                if (rs.next()) {
+                    courseName = rs.getString("course_name");
+                    teacher = rs.getString("teacher");
+                }
+            }
+
+            // Get enrollment count
+            int enrollmentCount = 0;
+            String enrollmentQuery = "SELECT COUNT(*) FROM enrollments WHERE course_code = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(enrollmentQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+                if (rs.next()) {
+                    enrollmentCount = rs.getInt(1);
+                }
+            }
+
+            // Get assignment stats
+            StringBuilder assignmentStats = new StringBuilder();
+            String assignmentQuery = "SELECT a.title, COUNT(s.id) as submissions, AVG(s.grade) as avg_grade " +
+                    "FROM assignments a LEFT JOIN submissions s ON a.id = s.assignment_id " +
+                    "WHERE a.course_code = ? GROUP BY a.title";
+            try (PreparedStatement pstmt = conn.prepareStatement(assignmentQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    assignmentStats.append(rs.getString("title"))
+                            .append(" - Submissions: ").append(rs.getInt("submissions"))
+                            .append(", Avg Grade: ").append(rs.getDouble("avg_grade")).append("\n");
+                }
+            }
+
+            // Build report
+            String report = "Course Report: " + courseName + " (" + courseCode + ")\n" +
+                    "Instructor: " + teacher + "\n" +
+                    "Enrollment: " + enrollmentCount + " students\n\n" +
+                    "Assignment Statistics:\n" + assignmentStats.toString();
+
+            // Show report
+            TextArea reportArea = new TextArea(report);
+            reportArea.setEditable(false);
+            reportArea.setWrapText(true);
+
+            Stage reportStage = new Stage();
+            reportStage.setTitle("Course Report - " + courseCode);
+            reportStage.setScene(new Scene(new StackPane(reportArea), 600, 400));
+            reportStage.show();
+
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to generate report: " + e.getMessage());
+        }
+    }
     private void loginAsStudent() {
         initializeStudentData();
         welcomeLabel.setText("Welcome, " + fullName + " (Student ID: " + userId + ")");
@@ -953,7 +1356,286 @@ public class HelloController extends Application {
         root.setCenter(mainContainer);
         mainContainer.getChildren().setAll(studentDashboard);
     }
+    private void generateTranscript(int studentId) {
+        try (Connection conn = getConnection()) {
+            // Get comprehensive student information
+            String studentQuery = "SELECT u.full_name, u.email, u.username, s.program, s.enrollment_date " +
+                    "FROM users u LEFT JOIN student_details s ON u.id = s.user_id " +
+                    "WHERE u.id = ?";
 
+            StringBuilder transcript = new StringBuilder();
+            String studentName = "";
+            String program = "";
+            String enrollmentDate = "";
+
+            try (PreparedStatement pstmt = conn.prepareStatement(studentQuery)) {
+                pstmt.setInt(1, studentId);
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    studentName = rs.getString("full_name");
+                    program = rs.getString("program") != null ? rs.getString("program") : "Not specified";
+                    enrollmentDate = rs.getString("enrollment_date") != null ?
+                            rs.getString("enrollment_date") : "Unknown";
+
+                    transcript.append("OFFICIAL ACADEMIC TRANSCRIPT\n");
+                    transcript.append("============================\n\n");
+                    transcript.append(String.format("%-20s: %s\n", "Student Name", studentName));
+                    transcript.append(String.format("%-20s: %d\n", "Student ID", studentId));
+                    transcript.append(String.format("%-20s: %s\n", "Program", program));
+                    transcript.append(String.format("%-20s: %s\n", "Enrollment Date", enrollmentDate));
+                    transcript.append("\n");
+                }
+            }
+
+            // Get all academic records
+            transcript.append("ACADEMIC RECORD\n");
+            transcript.append("---------------\n");
+            transcript.append(String.format("%-10s %-40s %-10s %-10s %-15s\n",
+                    "Code", "Course", "Grade", "Credits", "Status"));
+            transcript.append("--------------------------------------------------------------------\n");
+
+            String academicQuery = "SELECT c.course_code, c.course_name, t.grade, c.credits, " +
+                    "CASE WHEN cert.course_code IS NOT NULL THEN 'Completed' ELSE 'In Progress' END as status " +
+                    "FROM transcripts t " +
+                    "JOIN courses c ON t.course_code = c.course_code " +
+                    "LEFT JOIN certifications cert ON t.course_code = cert.course_code AND t.student_id = cert.student_id " +
+                    "WHERE t.student_id = ? ORDER BY c.course_code";
+
+            double totalGradePoints = 0;
+            int totalCredits = 0;
+
+            try (PreparedStatement pstmt = conn.prepareStatement(academicQuery)) {
+                pstmt.setInt(1, studentId);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    String courseCode = rs.getString("course_code");
+                    String courseName = rs.getString("course_name");
+                    int grade = rs.getInt("grade");
+                    int credits = rs.getInt("credits");
+                    String status = rs.getString("status");
+
+                    transcript.append(String.format("%-10s %-40s %-10d %-10d %-15s\n",
+                            courseCode,
+                            courseName.length() > 35 ? courseName.substring(0, 35) + "..." : courseName,
+                            grade,
+                            credits,
+                            status));
+
+                    // Calculate GPA (assuming grade is out of 100)
+                    if (status.equals("Completed")) {
+                        totalGradePoints += (grade / 20.0) * credits; // Convert to 5.0 scale
+                        totalCredits += credits;
+                    }
+                }
+            }
+
+            // Calculate GPA
+            double gpa = totalCredits > 0 ? totalGradePoints / totalCredits : 0.0;
+            transcript.append("\n");
+            transcript.append(String.format("%-20s: %.2f/5.00\n", "Cumulative GPA", gpa));
+            transcript.append("\n");
+
+            // Add certifications section
+            transcript.append("CERTIFICATIONS EARNED\n");
+            transcript.append("---------------------\n");
+
+            String certQuery = "SELECT c.course_code, co.course_name, c.certification_date " +
+                    "FROM certifications c JOIN courses co ON c.course_code = co.course_code " +
+                    "WHERE c.student_id = ? ORDER BY c.certification_date";
+
+            boolean hasCertifications = false;
+
+            try (PreparedStatement pstmt = conn.prepareStatement(certQuery)) {
+                pstmt.setInt(1, studentId);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    hasCertifications = true;
+                    transcript.append(String.format("%s - %s (Awarded: %s)\n",
+                            rs.getString("course_code"),
+                            rs.getString("course_name"),
+                            rs.getString("certification_date")));
+                }
+            }
+
+            if (!hasCertifications) {
+                transcript.append("No certifications earned yet\n");
+            }
+
+            // Add footer
+            transcript.append("\n\n");
+            transcript.append("OFFICIAL DOCUMENT - " + LocalDate.now() + "\n");
+            transcript.append("Learning Management System\n");
+            transcript.append("University of Example\n");
+
+            // Save the transcript to the database
+            saveTranscriptToDatabase(studentId, transcript.toString());
+
+            // Display to manager or student
+            if (userId == studentId) {
+                showTranscript(transcript.toString());
+            } else {
+                // For manager view, show more options
+                Stage transcriptStage = new Stage();
+                transcriptStage.setTitle("Transcript for " + studentName);
+
+                TextArea transcriptArea = new TextArea(transcript.toString());
+                transcriptArea.setEditable(false);
+                transcriptArea.setWrapText(true);
+                transcriptArea.setStyle("-fx-font-family: monospace;");
+
+                Button printButton = new Button("Print");
+                printButton.setOnAction(e -> printTranscript(transcript.toString()));
+
+                Button saveButton = new Button("Save as PDF");
+                String finalStudentName = studentName;
+                saveButton.setOnAction(e -> saveAsPDF(transcript.toString(), finalStudentName));
+
+                HBox buttonBox = new HBox(10, printButton, saveButton);
+                buttonBox.setAlignment(Pos.CENTER);
+
+                VBox container = new VBox(10, transcriptArea, buttonBox);
+                container.setPadding(new Insets(15));
+
+                transcriptStage.setScene(new Scene(container, 700, 600));
+                transcriptStage.show();
+            }
+
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to generate transcript: " + e.getMessage());
+        }
+    }
+
+    private void saveAsPDF(String content, String finalStudentName) {
+        // Define the filename with path inside user's Documents folder
+        String filename = Paths.get(System.getProperty("user.home"), "Documents", finalStudentName + "_Transcript.pdf").toString();
+
+        try {
+            // Initialize PDF writer with full path
+            PdfWriter writer = new PdfWriter(filename);
+            // Initialize PDF document
+            PdfDocument pdfDoc = new PdfDocument(writer);
+            // Initialize document
+            Document document = new Document(pdfDoc);
+
+            // Add content to PDF
+            document.add(new Paragraph(content));
+
+            // Close document
+            document.close();
+
+            System.out.println("PDF saved successfully: " + filename);
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            System.out.println("Error creating PDF: " + e.getMessage());
+        }
+    }
+    private void printTranscript(String content) {
+        PrinterJob printerJob = PrinterJob.getPrinterJob();
+
+        // Set printable content
+        printerJob.setPrintable(new Printable() {
+            @Override
+            public int print(Graphics graphics, PageFormat pageFormat, int pageIndex) {
+                if (pageIndex > 0) {
+                    return Printable.NO_SUCH_PAGE;
+                }
+                graphics.translate((int) pageFormat.getImageableX(), (int) pageFormat.getImageableY());
+
+                // Draw the text content
+                graphics.drawString(content, 100, 100);
+                // Alternatively, for multi-line text, you can split by lines and draw each line
+
+                return Printable.PAGE_EXISTS;
+            }
+        });
+
+        // Show print dialog
+        if (printerJob.printDialog()) {
+            try {
+                printerJob.print();
+            } catch (Exception e) {
+                e.printStackTrace();
+                System.out.println("Printing failed: " + e.getMessage());
+            }
+        }
+    }
+    private void saveTranscriptToDatabase(int studentId, String transcriptContent) {
+        try (Connection conn = getConnection()) {
+            // First delete any existing transcript for this student
+            String deleteQuery = "DELETE FROM student_transcripts WHERE student_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(deleteQuery)) {
+                pstmt.setInt(1, studentId);
+                pstmt.executeUpdate();
+            }
+
+            // Insert the new transcript
+            String insertQuery = "INSERT INTO student_transcripts (student_id, transcript_content, generated_date) " +
+                    "VALUES (?, ?, CURRENT_TIMESTAMP)";
+            try (PreparedStatement pstmt = conn.prepareStatement(insertQuery)) {
+                pstmt.setInt(1, studentId);
+                pstmt.setString(2, transcriptContent);
+                pstmt.executeUpdate();
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to save transcript: " + e.getMessage());
+        }
+    }
+
+    private void showTranscript(String transcript) {
+        TextArea transcriptArea = new TextArea(transcript);
+        transcriptArea.setEditable(false);
+        transcriptArea.setWrapText(true);
+        transcriptArea.setStyle("-fx-font-family: monospace;");
+
+        Stage transcriptStage = new Stage();
+        transcriptStage.setTitle("Your Transcript");
+        transcriptStage.setScene(new Scene(new StackPane(transcriptArea), 600, 400));
+        transcriptStage.show();
+    }
+    private void checkForNewTranscripts() {
+        if ("student".equals(role)) {
+            try {
+                boolean hasNewTranscript = DatabaseUtil.executeQuery(
+                        "SELECT COUNT(*) FROM student_transcripts " +
+                                "WHERE student_id = ? AND " +
+                                "(last_viewed IS NULL OR last_viewed < generated_date)",
+                        pstmt -> {
+                            pstmt.setInt(1, userId);
+                            ResultSet rs = pstmt.executeQuery();
+                            return rs.next() && rs.getInt(1) > 0;
+                        }
+                );
+
+                if (hasNewTranscript) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("New Transcript Available");
+                        alert.setHeaderText("Your transcript has been updated");
+                        alert.setContentText("Check the Transcript section in your dashboard to view it.");
+                        alert.showAndWait();
+
+                        // Update last viewed time
+                        DatabaseUtil.executeUpdate(
+                                "UPDATE student_transcripts SET last_viewed = CURRENT_TIMESTAMP " +
+                                        "WHERE student_id = ?",
+                                pstmt -> {
+                                    try {
+                                        pstmt.setInt(1, userId);
+                                    } catch (SQLException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }
+                        );
+                    });
+                }
+            } catch (Exception e) {
+                DatabaseUtil.logger.severe("Error checking for new transcripts: " + e.getMessage());
+            }
+        }
+    }
     private void loginAsLecturer() {
         initializeLecturerData();
         lecturerWelcomeLabel.setText("Welcome, " + fullName);
@@ -961,13 +1643,17 @@ public class HelloController extends Application {
 
         root.setCenter(lecturerDashboard);
     }
-
     private void setupStudentDashboard() {
         studentDashboard.getChildren().clear();
-        // Set light blue background color
-        studentDashboard.setStyle("-fx-background-color: #add8e6; -fx-padding: 20;"); // Light blue color
 
-        // Header
+        // Main dashboard styling
+        studentDashboard.setStyle(
+                "-fx-background-color: #e3f2fd;" +  // Lighter blue for a clean look
+                        "-fx-padding: 20;" +
+                        "-fx-spacing: 15;" // space between components
+        );
+
+        // --- Header Pane ---
         HBox header = new HBox();
         header.setAlignment(Pos.CENTER_LEFT);
         header.setSpacing(10);
@@ -975,7 +1661,9 @@ public class HelloController extends Application {
         header.setStyle(
                 "-fx-background-color: white;" +
                         "-fx-background-radius: 10;" +
-                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0.5, 0, 3);"
+                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 8, 0.2, 0, 2);" +
+                        "-fx-border-color: #ddd;" +
+                        "-fx-border-radius: 10;"
         );
 
         welcomeLabel.setStyle(
@@ -1012,13 +1700,19 @@ public class HelloController extends Application {
         logoutItem.setOnAction(e -> handleLogout());
 
         profileButton.getItems().addAll(profileItem, settingsItem, new SeparatorMenuItem(), logoutItem);
-
         header.getChildren().addAll(welcomeLabel, spacer, refreshButton, profileButton);
 
-        // Stats Cards
+        // --- Stats Cards Container ---
         HBox statsContainer = new HBox(20);
-        statsContainer.setPadding(new Insets(20, 0, 20, 0));
+        statsContainer.setPadding(new Insets(20));
         statsContainer.setAlignment(Pos.CENTER);
+        statsContainer.setStyle(
+                "-fx-background-color: white;" +
+                        "-fx-background-radius: 10;" +
+                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 6, 0.2, 0, 1);" +
+                        "-fx-border-color: #ccc;" +
+                        "-fx-border-radius: 10;"
+        );
 
         VBox coursesStat = createDashboardCard("Enrolled Courses", String.valueOf(courses.size()), "#1e88e5");
         VBox assignmentsStat = createDashboardCard("Active Assignments",
@@ -1027,30 +1721,652 @@ public class HelloController extends Application {
         VBox announcementsStat = createDashboardCard("New Announcements",
                 String.valueOf(announcements.size()), "#fdd835");
 
+        // Add borders and background to individual cards (optional enhancement)
+        for (VBox card : new VBox[]{coursesStat, assignmentsStat, announcementsStat}) {
+            card.setStyle(
+                    "-fx-background-color: #ffffff;" +
+                            "-fx-background-radius: 8;" +
+                            "-fx-border-color: #ddd;" +
+                            "-fx-border-radius: 8;" +
+                            "-fx-padding: 15;" +
+                            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.03), 3, 0.1, 0, 1);"
+            );
+        }
+
         statsContainer.getChildren().addAll(coursesStat, assignmentsStat, announcementsStat);
 
-        // TabPane
+        // --- TabPane ---
         TabPane studentTabPane = new TabPane();
         studentTabPane.setStyle(
                 "-fx-background-color: white;" +
-                        "-fx-background-radius: 8;" +
-                        "-fx-padding: 10;"
+                        "-fx-background-radius: 10;" +
+                        "-fx-padding: 10;" +
+                        "-fx-border-color: #ddd;" +
+                        "-fx-border-radius: 10;" +
+                        "-fx-tab-min-width: 120;" +
+                        "-fx-tab-max-height: 40;"
         );
 
         Tab dashboardTab = new Tab("Dashboard");
         dashboardTab.setClosable(false);
         setupStudentDashboardTab(dashboardTab);
+        applyTabContentStyle(dashboardTab);
 
         Tab coursesTab = new Tab("My Courses");
         coursesTab.setClosable(false);
         setupStudentCoursesTab(coursesTab);
+        applyTabContentStyle(coursesTab);
 
         Tab gradesTab = new Tab("My Grades");
         gradesTab.setClosable(false);
         setupStudentGradesTab(gradesTab);
+        applyTabContentStyle(gradesTab);
 
-        studentTabPane.getTabs().addAll(dashboardTab, coursesTab, gradesTab);
-        studentDashboard.getChildren().addAll(header, statsContainer, studentTabPane);
+        Tab assessmentTab = new Tab("Assessment");
+        assessmentTab.setClosable(false);
+        setupStudentAssessmentTab(assessmentTab);
+        applyTabContentStyle(assessmentTab);
+
+        Tab transcriptTab = new Tab("Transcript");
+        transcriptTab.setClosable(false);
+        setupTranscriptTab(transcriptTab);
+        applyTabContentStyle(transcriptTab);
+
+        Tab forumTab = new Tab("Forum");
+        setupStudentForumTab(forumTab);
+        forumTab.setClosable(false);
+        applyTabContentStyle(forumTab);
+
+        studentTabPane.getTabs().addAll(dashboardTab, coursesTab, gradesTab, assessmentTab, forumTab, transcriptTab);
+
+        // --- Bottom Button Section ---
+        Button reportButton = new Button("Generate Report");
+        Button certificationButton = new Button("Issue Certification");
+        Button transcriptButton = new Button("View Transcript");
+
+        reportButton.setOnAction(e -> generateReport(userId));
+        certificationButton.setOnAction(e -> issueCertification(userId, selectedCourseCode));
+        transcriptButton.setOnAction(e -> generateTranscript(userId));
+
+        HBox buttonBox = new HBox(10, reportButton, certificationButton, transcriptButton);
+        buttonBox.setAlignment(Pos.CENTER);
+        buttonBox.setPadding(new Insets(10));
+        buttonBox.setStyle(
+                "-fx-background-color: white;" +
+                        "-fx-background-radius: 10;" +
+                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.05), 5, 0.1, 0, 1);" +
+                        "-fx-border-color: #ddd;" +
+                        "-fx-border-radius: 10;"
+        );
+
+        checkForNewTranscripts();
+
+        // --- Final layout setup ---
+        studentDashboard.getChildren().addAll(header, statsContainer, studentTabPane, buttonBox);
+    }
+
+    private void applyTabContentStyle(Tab tab) {
+        if (tab.getContent() instanceof Region region) {
+            region.setStyle(
+                    "-fx-background-color: white;" +
+                            "-fx-border-color: #ccc;" +
+                            "-fx-border-radius: 10;" +
+                            "-fx-background-radius: 10;" +
+                            "-fx-padding: 15;" +
+                            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 4, 0.1, 0, 1);"
+            );
+        }
+    }
+
+    private void setupTranscriptTab(Tab transcriptTab) {
+        VBox content = new VBox(20);
+        content.setPadding(new Insets(20));
+        content.setStyle("-fx-background-color: white; -fx-background-radius: 8px;");
+
+        Label title = new Label("Academic Transcript");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        TextArea transcriptArea = new TextArea();
+        transcriptArea.setEditable(false);
+        transcriptArea.setWrapText(true);
+        transcriptArea.setStyle("-fx-font-family: monospace;");
+        transcriptArea.setPrefHeight(500);
+
+        Button loadTranscriptButton = new Button("Load Transcript");
+        loadTranscriptButton.setOnAction(e -> {
+            try {
+                String transcript = DatabaseUtil.executeQuery(
+                        "SELECT transcript_content FROM student_transcripts " +
+                                "WHERE student_id = ? ORDER BY generated_date DESC LIMIT 1",
+                        pstmt -> {
+                            pstmt.setInt(1, userId);
+                            ResultSet rs = pstmt.executeQuery();
+                            return rs.next() ? rs.getString("transcript_content") : "No transcript available";
+                        }
+                );
+                transcriptArea.setText(transcript);
+
+                // Update last viewed time
+                DatabaseUtil.executeUpdate(
+                        "UPDATE student_transcripts SET last_viewed = CURRENT_TIMESTAMP " +
+                                "WHERE student_id = ? AND (last_viewed IS NULL OR last_viewed < generated_date)",
+                        pstmt -> {
+                            try {
+                                pstmt.setInt(1, userId);
+                            } catch (SQLException ex) {
+                                throw new RuntimeException(ex);
+                            }
+                        }
+                );
+            } catch (Exception ex) {
+                transcriptArea.setText("Error loading transcript: " + ex.getMessage());
+            }
+        });
+
+        Button printTranscriptButton = new Button("Print Transcript");
+        printTranscriptButton.setOnAction(e -> {
+            if (!transcriptArea.getText().isEmpty()) {
+                // Implement printing functionality here
+                showAlert("Print", "Transcript printing functionality would be implemented here");
+            }
+        });
+
+        HBox buttonBox = new HBox(10, loadTranscriptButton, printTranscriptButton);
+        buttonBox.setAlignment(Pos.CENTER_LEFT);
+
+        content.getChildren().addAll(title, buttonBox, transcriptArea);
+        transcriptTab.setContent(new ScrollPane(content));
+    }
+
+    private void setupStudentForumTab(Tab forumTab) {
+        VBox forumLayout = new VBox(15);
+        forumLayout.setPadding(new Insets(20));
+        forumLayout.setStyle("-fx-background-color: #f0f0f0;");
+
+        // Messages display
+        ListView<String> forumMessages = new ListView<>();
+        forumMessages.setPrefHeight(400);
+        refreshStudentForumMessages(forumMessages);
+
+        // Input area
+        TextArea messageInput = new TextArea();
+        messageInput.setPromptText("Write your message...");
+        messageInput.setPrefRowCount(3);
+
+        // Send button
+        Button sendButton = new Button("Send");
+        sendButton.setStyle("-fx-background-color: #1e90ff; -fx-text-fill: white;");
+        sendButton.setOnAction(e -> {
+            String message = messageInput.getText().trim();
+            if (!message.isEmpty()) {
+                saveForumMessage(message);
+                messageInput.clear();
+                refreshStudentForumMessages(forumMessages);
+            } else {
+                showAlert("Please write a message before sending.");
+            }
+        });
+
+        // Assemble layout
+        forumLayout.getChildren().addAll(new Label("Forum Messages"), forumMessages,
+                new Label("New Message"), messageInput, sendButton);
+
+        forumTab.setContent(forumLayout);
+    }
+    private void refreshStudentForumMessages(ListView<String> forumMessages) {
+        List<String> messages = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+            String sql = "SELECT author, message, timestamp FROM forum_posts ORDER BY timestamp DESC";
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+            while (rs.next()) {
+                String author = rs.getString("author");
+                String message = rs.getString("message");
+                String timestamp = rs.getString("timestamp");
+                messages.add("[" + timestamp + "] " + author + ": " + message);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            showAlert("Error loading forum messages.");
+        }
+        Platform.runLater(() -> {
+            forumMessages.getItems().setAll(messages);
+        });
+    }
+
+    private void saveForumMessage(String message) {
+        String author = fullName; // Or retrieve from current user context
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+            String sql = "INSERT INTO forum_posts (author, message, timestamp) VALUES (?, ?, ?)";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, author);
+            pstmt.setString(2, message);
+            pstmt.setString(3, timestamp);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+            showAlert("Error saving your message.");
+        }
+    }
+
+    private void setupStudentAssessmentTab(Tab assessmentTab) {
+        VBox container = new VBox(15);
+        container.setPadding(new Insets(20));
+        container.setStyle("-fx-background-color: #ffffff; -fx-background-radius: 8;");
+
+        Label title = new Label("Course Assessments");
+        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+
+        // Course selection
+        ComboBox<Course> courseCombo = new ComboBox<>();
+        courseCombo.setItems(courses);
+        courseCombo.setConverter(new StringConverter<Course>() {
+            @Override
+            public String toString(Course course) {
+                return course == null ? "" : course.getCourseCode() + " - " + course.getCourseName();
+            }
+
+            @Override
+            public Course fromString(String string) {
+                return null;
+            }
+        });
+
+        // Questions container
+        VBox questionsContainer = new VBox(10);
+        questionsContainer.setPadding(new Insets(10));
+
+        // Load questions when course is selected
+        courseCombo.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newCourse) -> {
+            questionsContainer.getChildren().clear();
+            if (newCourse != null) {
+                loadAssessmentQuestions(newCourse.getCourseCode(), questionsContainer);
+            }
+        });
+
+        container.getChildren().addAll(title, new Label("Select Course:"), courseCombo, questionsContainer);
+        assessmentTab.setContent(new ScrollPane(container));
+    }
+    private void loadAssessmentQuestions(String courseCode, VBox container) {
+        try (Connection conn = getConnection()) {
+            // Load MCQ questions
+            String mcqQuery = "SELECT q.id, q.question_text FROM mcq_questions q " +
+                    "WHERE q.course_code = ? ORDER BY q.created_at DESC";
+
+            List<MCQQuestion> mcqQuestions = new ArrayList<>();
+
+            try (PreparedStatement pstmt = conn.prepareStatement(mcqQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    MCQQuestion question = new MCQQuestion(
+                            rs.getInt("id"),
+                            rs.getString("question_text"),
+                            courseCode,
+                            -1, // creator ID not needed here
+                            null // creation date not needed here
+                    );
+
+                    // Load options for this question
+                    String optionQuery = "SELECT id, option_text, is_correct FROM mcq_options " +
+                            "WHERE question_id = ?";
+                    try (PreparedStatement optionStmt = conn.prepareStatement(optionQuery)) {
+                        optionStmt.setInt(1, question.getId());
+                        ResultSet optionRs = optionStmt.executeQuery();
+
+                        while (optionRs.next()) {
+                            question.addOption(new MCQOption(
+                                    optionRs.getInt("id"),
+                                    question.getId(),
+                                    optionRs.getString("option_text"),
+                                    optionRs.getBoolean("is_correct")
+                            ));
+                        }
+                    }
+                    mcqQuestions.add(question);
+                }
+            }
+
+            // Load short answer questions
+            String saQuery = "SELECT id, question_text FROM short_answer_questions " +
+                    "WHERE course_code = ? ORDER BY created_at DESC";
+
+            List<ShortAnswerQuestion> saQuestions = new ArrayList<>();
+
+            try (PreparedStatement pstmt = conn.prepareStatement(saQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    saQuestions.add(new ShortAnswerQuestion(
+                            rs.getInt("id"),
+                            rs.getString("question_text"),
+                            courseCode
+                    ));
+                }
+            }
+
+            // Display questions
+            if (mcqQuestions.isEmpty() && saQuestions.isEmpty()) {
+                container.getChildren().add(new Label("No assessments available for this course yet."));
+                return;
+            }
+
+            // Add MCQ questions
+            if (!mcqQuestions.isEmpty()) {
+                Label mcqTitle = new Label("Multiple Choice Questions");
+                mcqTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+                container.getChildren().add(mcqTitle);
+
+                for (MCQQuestion question : mcqQuestions) {
+                    container.getChildren().add(createMCQQuestionCard(question));
+                }
+            }
+
+            // Add short answer questions
+            if (!saQuestions.isEmpty()) {
+                Label saTitle = new Label("Short Answer Questions");
+                saTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+                container.getChildren().add(saTitle);
+
+                for (ShortAnswerQuestion question : saQuestions) {
+                    container.getChildren().add(createSAQuestionCard(question));
+                }
+            }
+
+            // Add submit button if there are questions
+            if (!mcqQuestions.isEmpty() || !saQuestions.isEmpty()) {
+                Button submitBtn = new Button("Submit All Answers");
+                submitBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+                submitBtn.setOnAction(e -> submitAllAnswers(courseCode, container));
+                container.getChildren().add(submitBtn);
+            }
+
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to load assessment questions: " + e.getMessage());
+        }
+    }
+    private VBox createMCQQuestionCard(MCQQuestion question) {
+        VBox card = new VBox(10);
+        card.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 15; -fx-background-radius: 8;");
+
+        Label questionLabel = new Label(question.getQuestionText());
+        questionLabel.setWrapText(true);
+        questionLabel.setStyle("-fx-font-weight: bold;");
+
+        ToggleGroup optionsGroup = new ToggleGroup();
+        VBox optionsBox = new VBox(5);
+
+        for (MCQOption option : question.getOptions()) {
+            RadioButton radioBtn = new RadioButton(option.getOptionText());
+            radioBtn.setToggleGroup(optionsGroup);
+            radioBtn.setUserData(option.getId());
+            optionsBox.getChildren().add(radioBtn);
+        }
+
+        // Load previous answer if exists
+        try {
+            String answerQuery = "SELECT option_id FROM mcq_student_answers " +
+                    "WHERE student_id = ? AND question_id = ?";
+            try (PreparedStatement pstmt = getConnection().prepareStatement(answerQuery)) {
+                pstmt.setInt(1, userId);
+                pstmt.setInt(2, question.getId());
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    int selectedOptionId = rs.getInt("option_id");
+                    for (Node node : optionsBox.getChildren()) {
+                        if (node instanceof RadioButton) {
+                            RadioButton rb = (RadioButton) node;
+                            if (rb.getUserData().equals(selectedOptionId)) {
+                                rb.setSelected(true);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            // Ignore if we can't load previous answer
+        }
+
+        card.getChildren().addAll(questionLabel, optionsBox);
+        return card;
+    }
+    private VBox createSAQuestionCard(ShortAnswerQuestion question) {
+        VBox card = new VBox(10);
+        card.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 15; -fx-background-radius: 8;");
+
+        Label questionLabel = new Label(question.getQuestionText());
+        questionLabel.setWrapText(true);
+        questionLabel.setStyle("-fx-font-weight: bold;");
+
+        TextArea answerArea = new TextArea();
+        answerArea.setPromptText("Type your answer here...");
+        answerArea.setPrefRowCount(3);
+
+        // Load previous answer if exists
+        try {
+            String answerQuery = "SELECT answer FROM short_answer_student_answers " +
+                    "WHERE student_id = ? AND question_id = ?";
+            try (PreparedStatement pstmt = getConnection().prepareStatement(answerQuery)) {
+                pstmt.setInt(1, userId);
+                pstmt.setInt(2, question.getId());
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    answerArea.setText(rs.getString("answer"));
+                }
+            }
+        } catch (SQLException e) {
+            // Ignore if we can't load previous answer
+        }
+
+        card.getChildren().addAll(questionLabel, answerArea);
+        return card;
+    }
+    private void submitAllAnswers(String courseCode, VBox container) {
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+
+            try {
+                // Process MCQ answers
+                for (Node node : container.getChildren()) {
+                    if (node instanceof VBox) {
+                        VBox card = (VBox) node;
+                        if (card.getChildren().size() > 1 && card.getChildren().get(1) instanceof VBox) {
+                            VBox optionsBox = (VBox) card.getChildren().get(1);
+                            if (optionsBox.getChildren().size() > 0 &&
+                                    optionsBox.getChildren().get(0) instanceof RadioButton) {
+
+                                // This is an MCQ question card
+                                Label questionLabel = (Label) card.getChildren().get(0);
+                                String questionText = questionLabel.getText();
+
+                                // Find the selected option
+                                RadioButton selected = null;
+                                for (Node optionNode : optionsBox.getChildren()) {
+                                    if (optionNode instanceof RadioButton) {
+                                        RadioButton rb = (RadioButton) optionNode;
+                                        if (rb.isSelected()) {
+                                            selected = rb;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (selected != null) {
+                                    int optionId = (int) selected.getUserData();
+                                    saveMCQAnswer(conn, questionText, optionId);
+                                }
+                            }
+                        } else if (card.getChildren().size() > 1 && card.getChildren().get(1) instanceof TextArea) {
+                            // This is a short answer question card
+                            Label questionLabel = (Label) card.getChildren().get(0);
+                            String questionText = questionLabel.getText();
+                            TextArea answerArea = (TextArea) card.getChildren().get(1);
+
+                            if (!answerArea.getText().trim().isEmpty()) {
+                                saveShortAnswer(conn, questionText, answerArea.getText());
+                            }
+                        }
+                    }
+                }
+
+                conn.commit();
+                showAlert("Success", "Your answers have been submitted successfully!");
+            } catch (SQLException e) {
+                conn.rollback();
+                showAlert("Error", "Failed to submit answers: " + e.getMessage());
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Database error: " + e.getMessage());
+        }
+    }
+
+    private void saveMCQAnswer(Connection conn, String questionText, int optionId) throws SQLException {
+        // Check if answer already exists
+        String checkQuery = "SELECT id FROM mcq_student_answers WHERE student_id = ? AND question_id = " +
+                "(SELECT id FROM mcq_questions WHERE question_text = ?)";
+
+        try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
+            checkStmt.setInt(1, userId);
+            checkStmt.setString(2, questionText);
+            ResultSet rs = checkStmt.executeQuery();
+
+            if (rs.next()) {
+                // Update existing answer
+                String updateQuery = "UPDATE mcq_student_answers SET option_id = ?, answered_at = NOW() " +
+                        "WHERE id = ?";
+                try (PreparedStatement updateStmt = conn.prepareStatement(updateQuery)) {
+                    updateStmt.setInt(1, optionId);
+                    updateStmt.setInt(2, rs.getInt("id"));
+                    updateStmt.executeUpdate();
+                }
+            } else {
+                // Insert new answer
+                String insertQuery = "INSERT INTO mcq_student_answers (student_id, question_id, option_id, answered_at) " +
+                        "VALUES (?, (SELECT id FROM mcq_questions WHERE question_text = ?), ?, NOW())";
+                try (PreparedStatement insertStmt = conn.prepareStatement(insertQuery)) {
+                    insertStmt.setInt(1, userId);
+                    insertStmt.setString(2, questionText);
+                    insertStmt.setInt(3, optionId);
+                    insertStmt.executeUpdate();
+                }
+            }
+        }
+    }
+
+    private void saveShortAnswer(Connection conn, String questionText, String answer) throws SQLException {
+        // Check if answer already exists
+        String checkQuery = "SELECT id FROM short_answer_student_answers WHERE student_id = ? AND question_id = " +
+                "(SELECT id FROM short_answer_questions WHERE question_text = ?)";
+
+        try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
+            checkStmt.setInt(1, userId);
+            checkStmt.setString(2, questionText);
+            ResultSet rs = checkStmt.executeQuery();
+
+            if (rs.next()) {
+                // Update existing answer
+                String updateQuery = "UPDATE short_answer_student_answers SET answer = ?, answered_at = NOW() " +
+                        "WHERE id = ?";
+                try (PreparedStatement updateStmt = conn.prepareStatement(updateQuery)) {
+                    updateStmt.setString(1, answer);
+                    updateStmt.setInt(2, rs.getInt("id"));
+                    updateStmt.executeUpdate();
+                }
+            } else {
+                // Insert new answer
+                String insertQuery = "INSERT INTO short_answer_student_answers (student_id, question_id, answer, answered_at) " +
+                        "VALUES (?, (SELECT id FROM short_answer_questions WHERE question_text = ?), ?, NOW())";
+                try (PreparedStatement insertStmt = conn.prepareStatement(insertQuery)) {
+                    insertStmt.setInt(1, userId);
+                    insertStmt.setString(2, questionText);
+                    insertStmt.setString(3, answer);
+                    insertStmt.executeUpdate();
+                }
+            }
+        }
+    }
+
+    // Represents a question
+    public static class AssessmentQuestion {
+        private final int id;
+        private final String question;
+
+        public AssessmentQuestion(int id, String question) {
+            this.id = id;
+            this.question = question;
+        }
+        public int getId() { return id; }
+        public String getQuestion() { return question; }
+    }
+
+    // Fetch questions (replace with DB fetch as needed)
+    private List<AssessmentQuestion> getAssessmentQuestions() {
+        // Fetch questions from the database or static list
+        // Example with static questions:
+        return Arrays.asList(
+                new AssessmentQuestion(1, "Explain the concept of polymorphism."),
+                new AssessmentQuestion(2, "Describe the lifecycle of a JavaFX application."),
+                new AssessmentQuestion(3, "What is dependency injection?")
+        );
+    }
+    private Map<Integer, String> getStudentAnswers() {
+        Map<Integer, String> answersMap = new HashMap<>();
+        try (Connection conn = getConnection()) {
+            String sql = "SELECT question_id, answer FROM student_answers WHERE student_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setInt(1, userId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    answersMap.put(rs.getInt("question_id"), rs.getString("answer"));
+                }
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to load your previous answers: " + e.getMessage());
+        }
+        return answersMap;
+    }
+
+    // Save answers (store in DB)
+    private void saveStudentAnswer(AssessmentQuestion q, String answer) {
+        try (Connection conn = getConnection()) {
+            // Check if answer already exists
+            String checkSql = "SELECT answer FROM student_answers WHERE student_id = ? AND question_id = ?";
+            try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+                checkStmt.setInt(1, userId);
+                checkStmt.setInt(2, q.getId());
+                ResultSet rs = checkStmt.executeQuery();
+                if (rs.next()) {
+                    // Update existing answer
+                    String updateSql = "UPDATE student_answers SET answer = ?, answer_date = NOW() WHERE student_id = ? AND question_id = ?";
+                    try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                        updateStmt.setString(1, answer);
+                        updateStmt.setInt(2, userId);
+                        updateStmt.setInt(3, q.getId());
+                        updateStmt.executeUpdate();
+                    }
+                } else {
+                    // Insert new answer
+                    String insertSql = "INSERT INTO student_answers (student_id, question_id, answer, answer_date) VALUES (?, ?, ?, NOW())";
+                    try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                        insertStmt.setInt(1, userId);
+                        insertStmt.setInt(2, q.getId());
+                        insertStmt.setString(3, answer);
+                        insertStmt.executeUpdate();
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to save your answer: " + e.getMessage());
+        }
     }
 
     // Helper to style buttons with hover
@@ -1317,6 +2633,7 @@ public class HelloController extends Application {
         return card;
     }
     private void showCourseDetails(Course course) {
+        selectedCourseCode = course.getCourseCode();
         VBox courseView = new VBox(20);
         courseView.setStyle("-fx-background-color: #f8f9fa; -fx-padding: 20;");
 
@@ -1773,8 +3090,477 @@ public class HelloController extends Application {
         gradingTab.setClosable(false);
         setupGradingTab(gradingTab);
 
-        lecturerTabPane.getTabs().addAll(coursesTab, managementTab, gradingTab);
+        // Assessment Tab - New
+        Tab assessmentTab = new Tab("Assessment");
+        assessmentTab.setClosable(false);
+        setupAssessmentTab(assessmentTab);
+        Tab forumTab = new Tab("Forum");
+        forumTab.setClosable(false);
+        setupForumTab(forumTab);
+
+        // Add all tabs to the TabPane
+        lecturerTabPane.getTabs().addAll(coursesTab, managementTab, gradingTab, assessmentTab, forumTab);
         lecturerDashboard.getChildren().addAll(header, statsContainer, lecturerTabPane);
+    }
+    private void setupForumTab(Tab forumTab) {
+        VBox forumLayout = new VBox(10);
+        forumLayout.setPadding(new Insets(10));
+
+        ListView<String> postsListView = new ListView<>();
+        postsListView.setPrefHeight(300);
+        refreshForumPosts(postsListView); // Load existing posts
+
+        TextArea newPostArea = new TextArea();
+        newPostArea.setPromptText("Write your message...");
+        newPostArea.setPrefRowCount(3);
+
+        Button postButton = new Button("Post");
+        postButton.setOnAction(e -> {
+            String message = newPostArea.getText().trim();
+            if (!message.isEmpty()) {
+                saveForumPost(message);
+                newPostArea.clear();
+                refreshForumPosts(postsListView); // Refresh display
+            } else {
+                showAlert("Please write a message before posting");
+            }
+        });
+
+        forumLayout.getChildren().addAll(
+                new Label("Forum Posts"),
+                postsListView,
+                new Label("New Post"),
+                newPostArea,
+                postButton
+        );
+
+        forumTab.setContent(forumLayout);
+    }    private void refreshForumPosts(ListView<String> postsListView) {
+        List<String> posts = getForumPosts();
+        Platform.runLater(() -> {
+            postsListView.getItems().setAll(posts);
+        });
+    }
+    private List<String> getForumPosts() {
+        List<String> posts = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(DB_URL, USER, DB_PASSWORD)) {
+            String sql = "SELECT author, message, timestamp FROM forum_posts ORDER BY timestamp DESC";
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(sql);
+            while (rs.next()) {
+                String author = rs.getString("author");
+                String message = rs.getString("message");
+                String timestamp = rs.getString("timestamp");
+                posts.add("[" + timestamp + "] " + author + ": " + message);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            showAlert("Error loading forum posts.");
+        }
+        return posts;
+    }
+    private void saveForumPost(String message) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, USER, DB_PASSWORD)) {
+            String sql = "INSERT INTO forum_posts (author, message, timestamp) VALUES (?, ?, ?)";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, fullName);
+            pstmt.setString(2, message);
+            pstmt.setString(3, LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+            showAlert("Error saving your post.");
+        }
+    }
+
+
+
+
+    // Method to setup Assessment Tab content
+    private void setupAssessmentTab(Tab assessmentTab) {
+        VBox container = new VBox(15);
+        container.setPadding(new Insets(20));
+        container.setStyle("-fx-background-color: #ffffff; -fx-background-radius: 8;");
+
+        // TabPane for different assessment types
+        TabPane assessmentTypes = new TabPane();
+
+        // Short Answer Questions Tab
+        Tab shortAnswerTab = new Tab("Short Answer");
+        setupShortAnswerTab(shortAnswerTab); // Your existing implementation
+
+        // Multiple Choice Questions Tab
+        Tab mcqTab = new Tab("Multiple Choice");
+        setupMCQTab(mcqTab);
+
+        assessmentTypes.getTabs().addAll(shortAnswerTab, mcqTab);
+        container.getChildren().add(assessmentTypes);
+
+        assessmentTab.setContent(new ScrollPane(container));
+
+    }
+
+    private void setupShortAnswerTab(Tab shortAnswerTab) {
+
+    }
+
+    private void setupMCQTab(Tab mcqTab) {
+        VBox mcqContainer = new VBox(15);
+        mcqContainer.setPadding(new Insets(20));
+
+        // Course selection
+        ComboBox<Course> courseCombo = new ComboBox<>();
+        courseCombo.setItems(lecturerCourses);
+        courseCombo.setConverter(new StringConverter<Course>() {
+            @Override
+            public String toString(Course course) {
+                return course == null ? "" : course.getCourseCode() + " - " + course.getCourseName();
+            }
+
+            @Override
+            public Course fromString(String string) {
+                return null;
+            }
+        });
+
+        // Question input
+        TextArea questionArea = new TextArea();
+        questionArea.setPromptText("Enter the question text...");
+        questionArea.setPrefRowCount(3);
+
+        // Options container
+        VBox optionsContainer = new VBox(10);
+
+        // Add option button
+        Button addOptionBtn = new Button("Add Option");
+        addOptionBtn.setOnAction(e -> addOptionField(optionsContainer));
+
+        // Create question button
+        Button createQuestionBtn = new Button("Create MCQ");
+        createQuestionBtn.setOnAction(e -> {
+            if (courseCombo.getValue() == null || questionArea.getText().trim().isEmpty()) {
+                showAlert("Error", "Please select a course and enter a question");
+                return;
+            }
+
+            // Get all options
+            List<Pair<String, Boolean>> options = new ArrayList<>();
+            for (Node node : optionsContainer.getChildren()) {
+                if (node instanceof HBox) {
+                    HBox optionBox = (HBox) node;
+                    TextField textField = (TextField) optionBox.getChildren().get(0);
+                    CheckBox correctBox = (CheckBox) optionBox.getChildren().get(1);
+
+                    if (!textField.getText().trim().isEmpty()) {
+                        options.add(new Pair<>(textField.getText().trim(), correctBox.isSelected()));
+                    }
+                }
+            }
+
+            if (options.size() < 2) {
+                showAlert("Error", "Please add at least 2 options");
+                return;
+            }
+
+            if (options.stream().noneMatch(Pair::getValue)) {
+                showAlert("Error", "Please mark at least one option as correct");
+                return;
+            }
+
+            createMCQQuestion(courseCombo.getValue().getCourseCode(),
+                    questionArea.getText().trim(), options);
+
+            // Clear form
+            questionArea.clear();
+            optionsContainer.getChildren().clear();
+        });
+
+        // Existing questions list
+        ListView<MCQQuestion> questionsList = new ListView<>();
+        questionsList.setCellFactory(param -> new ListCell<MCQQuestion>() {
+            @Override
+            protected void updateItem(MCQQuestion question, boolean empty) {
+                super.updateItem(question, empty);
+                if (empty || question == null) {
+                    setText(null);
+                } else {
+                    setText(question.getQuestionText() + " (" + question.getCourseCode() + ")");
+                }
+            }
+        });
+        Button viewResultsBtn = new Button("View Results");
+        viewResultsBtn.setOnAction(e -> {
+            MCQQuestion selected = questionsList.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                showMCQResults(selected);
+            } else {
+                showAlert("Error", "Please select a question to view results");
+            }
+        });
+
+        mcqContainer.getChildren().add(viewResultsBtn);
+
+        // Load questions when course is selected
+        courseCombo.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newCourse) -> {
+            if (newCourse != null) {
+                loadMCQQuestions(newCourse.getCourseCode(), questionsList);
+            }
+        });
+
+        mcqContainer.getChildren().addAll(
+                new Label("Select Course:"),
+                courseCombo,
+                new Label("Question Text:"),
+                questionArea,
+                new Label("Options:"),
+                optionsContainer,
+                addOptionBtn,
+                createQuestionBtn,
+                new Separator(),
+                new Label("Existing Questions:"),
+                questionsList
+        );
+
+        mcqTab.setContent(new ScrollPane(mcqContainer));
+
+    }
+    private void showMCQResults(MCQQuestion question) {
+        Stage resultsStage = new Stage();
+        resultsStage.setTitle("Results for: " + question.getQuestionText());
+
+        VBox container = new VBox(15);
+        container.setPadding(new Insets(20));
+
+        // Question display
+        Label questionLabel = new Label(question.getQuestionText());
+        questionLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+        questionLabel.setWrapText(true);
+
+        // Correct answer(s)
+        Label correctLabel = new Label("Correct answer(s): " +
+                question.getOptions().stream()
+                        .filter(MCQOption::isCorrect)
+                        .map(MCQOption::getOptionText)
+                        .collect(Collectors.joining(", ")));
+        correctLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2E7D32;");
+
+        // Results table
+        TableView<Map<String, String>> resultsTable = new TableView<>();
+
+        // Student column
+        TableColumn<Map<String, String>, String> studentCol = new TableColumn<>("Student");
+        studentCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().get("student_name")));
+
+        // Answer column
+        TableColumn<Map<String, String>, String> answerCol = new TableColumn<>("Answer");
+        answerCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().get("answer_text")));
+
+        // Correct column
+        TableColumn<Map<String, String>, String> correctCol = new TableColumn<>("Correct?");
+        correctCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().get("is_correct")));
+        correctCol.setCellFactory(column -> new TableCell<Map<String, String>, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    if ("Yes".equals(item)) {
+                        setStyle("-fx-text-fill: #2E7D32; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-text-fill: #C62828; -fx-font-weight: bold;");
+                    }
+                }
+            }
+        });
+
+        // Time column
+        TableColumn<Map<String, String>, String> timeCol = new TableColumn<>("Submitted At");
+        timeCol.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().get("answered_at")));
+
+        resultsTable.getColumns().addAll(studentCol, answerCol, correctCol, timeCol);
+
+        // Load results
+        try (Connection conn = getConnection()) {
+            String query = "SELECT u.full_name AS student_name, o.option_text AS answer_text, " +
+                    "o.is_correct, a.answered_at " +
+                    "FROM mcq_student_answers a " +
+                    "JOIN users u ON a.student_id = u.id " +
+                    "JOIN mcq_options o ON a.option_id = o.id " +
+                    "WHERE a.question_id = ? " +
+                    "ORDER BY a.answered_at DESC";
+
+            ObservableList<Map<String, String>> results = FXCollections.observableArrayList();
+
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setInt(1, question.getId());
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    Map<String, String> row = new HashMap<>();
+                    row.put("student_name", rs.getString("student_name"));
+                    row.put("answer_text", rs.getString("answer_text"));
+                    row.put("is_correct", rs.getBoolean("is_correct") ? "Yes" : "No");
+                    row.put("answered_at", rs.getTimestamp("answered_at").toLocalDateTime()
+                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                    results.add(row);
+                }
+            }
+
+            resultsTable.setItems(results);
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to load results: " + e.getMessage());
+        }
+
+        // Stats
+        int totalAnswers = resultsTable.getItems().size();
+        long correctAnswers = resultsTable.getItems().stream()
+                .filter(row -> "Yes".equals(row.get("is_correct")))
+                .count();
+
+        Label statsLabel = new Label(String.format("Correct answers: %d/%d (%.1f%%)",
+                correctAnswers, totalAnswers,
+                totalAnswers > 0 ? (correctAnswers * 100.0 / totalAnswers) : 0));
+        statsLabel.setStyle("-fx-font-weight: bold;");
+
+        container.getChildren().addAll(
+                questionLabel,
+                correctLabel,
+                new Separator(),
+                statsLabel,
+                resultsTable
+        );
+
+        Scene scene = new Scene(container, 600, 500);
+        resultsStage.setScene(scene);
+        resultsStage.show();
+    }
+
+    private void addOptionField(VBox container) {
+        HBox optionBox = new HBox(10);
+        TextField optionField = new TextField();
+        optionField.setPromptText("Option text...");
+        CheckBox correctBox = new CheckBox("Correct?");
+
+        Button removeBtn = new Button("X");
+        removeBtn.setStyle("-fx-background-color: #ff4444; -fx-text-fill: white;");
+        removeBtn.setOnAction(e -> container.getChildren().remove(optionBox));
+
+        optionBox.getChildren().addAll(optionField, correctBox, removeBtn);
+        container.getChildren().add(optionBox);
+    }
+
+
+    private void createMCQQuestion(String courseCode, String questionText, List<Pair<String, Boolean>> options) {
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+
+            try {
+                // Insert question
+                String questionQuery = "INSERT INTO mcq_questions (question_text, course_code, created_by) VALUES (?, ?, ?)";
+                int questionId;
+
+                try (PreparedStatement pstmt = conn.prepareStatement(questionQuery, Statement.RETURN_GENERATED_KEYS)) {
+                    pstmt.setString(1, questionText);
+                    pstmt.setString(2, courseCode);
+                    pstmt.setInt(3, userId);
+                    pstmt.executeUpdate();
+
+                    ResultSet rs = pstmt.getGeneratedKeys();
+                    if (rs.next()) {
+                        questionId = rs.getInt(1);
+                    } else {
+                        throw new SQLException("Failed to get question ID");
+                    }
+                }
+
+                // Insert options
+                String optionQuery = "INSERT INTO mcq_options (question_id, option_text, is_correct) VALUES (?, ?, ?)";
+                try (PreparedStatement pstmt = conn.prepareStatement(optionQuery)) {
+                    for (Pair<String, Boolean> option : options) {
+                        pstmt.setInt(1, questionId);
+                        pstmt.setString(2, option.getKey());
+                        pstmt.setBoolean(3, option.getValue());
+                        pstmt.addBatch();
+                    }
+                    pstmt.executeBatch();
+                }
+
+                conn.commit();
+                showAlert("Success", "MCQ question created successfully");
+            } catch (SQLException e) {
+                conn.rollback();
+                showAlert("Error", "Failed to create MCQ: " + e.getMessage());
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            showAlert("Error", "Database error: " + e.getMessage());
+        }
+    }
+
+    private void loadMCQQuestions(String courseCode, ListView<MCQQuestion> listView) {
+        try (Connection conn = getConnection()) {
+            // Load questions
+            String questionQuery = "SELECT * FROM mcq_questions WHERE course_code = ? ORDER BY created_at DESC";
+            List<MCQQuestion> questions = new ArrayList<>();
+
+            try (PreparedStatement pstmt = conn.prepareStatement(questionQuery)) {
+                pstmt.setString(1, courseCode);
+                ResultSet rs = pstmt.executeQuery();
+
+                while (rs.next()) {
+                    MCQQuestion question = new MCQQuestion(
+                            rs.getInt("id"),
+                            rs.getString("question_text"),
+                            rs.getString("course_code"),
+                            rs.getInt("created_by"),
+                            rs.getTimestamp("created_at").toLocalDateTime()
+                    );
+
+                    // Load options for this question
+                    String optionQuery = "SELECT * FROM mcq_options WHERE question_id = ?";
+                    try (PreparedStatement optionStmt = conn.prepareStatement(optionQuery)) {
+                        optionStmt.setInt(1, question.getId());
+                        ResultSet optionRs = optionStmt.executeQuery();
+
+                        while (optionRs.next()) {
+                            question.addOption(new MCQOption(
+                                    optionRs.getInt("id"),
+                                    optionRs.getInt("question_id"),
+                                    optionRs.getString("option_text"),
+                                    optionRs.getBoolean("is_correct")
+                            ));
+                        }
+                    }
+
+                    questions.add(question);
+                }
+            }
+
+            listView.getItems().setAll(questions);
+        } catch (SQLException e) {
+            showAlert("Error", "Failed to load questions: " + e.getMessage());
+        }
+    }
+
+    private List<String> getSavedQuestions() {
+        // Return list of saved questions
+        return new ArrayList<>();
+    }
+
+    private void createQuizFromQuestions() {
+        // Implement quiz creation logic
+    }
+
+    private void showAlert(String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Information");
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
     }
 
     private int getStudentCount() {
@@ -1794,12 +3580,13 @@ public class HelloController extends Application {
         }
     }
 
+
     private void setupLecturerCoursesTab(Tab coursesTab) {
         VBox content = new VBox(20);
         content.setStyle("-fx-background-color: white; -fx-padding: 20; -fx-background-radius: 8px;");
 
         Label title = new Label("Your Courses");
-        title.getStyleClass().add("subtitle");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #333;");
 
         FlowPane coursesGrid = new FlowPane();
         coursesGrid.setHgap(20);
@@ -1808,31 +3595,132 @@ public class HelloController extends Application {
 
         for (Course course : lecturerCourses) {
             VBox courseCard = new VBox(10);
-            courseCard.getStyleClass().add("card");
+            courseCard.setStyle("-fx-background-color: white; -fx-background-radius: 8px; " +
+                    "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 2, 4, 0); " +
+                    "-fx-padding: 15;");
             courseCard.setPrefWidth(300);
 
+            // Course Code
             Label code = new Label(course.getCourseCode());
-            code.getStyleClass().add("card-title");
+            code.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #2a60b9;");
 
+            // Course Name
             Label name = new Label(course.getCourseName());
             name.setStyle("-fx-text-fill: #5f6368; -fx-font-size: 14px;");
+            name.setWrapText(true);
 
+            // Progress
             Label progress = new Label("Average Progress: " + course.getProgress() + "%");
             progress.setStyle("-fx-text-fill: #5f6368; -fx-font-size: 12px;");
 
-            Button manageButton = new Button("Manage Course");
-            manageButton.getStyleClass().add("button-primary");
+            // Button Container
+            HBox buttonBox = new HBox(10);
+            buttonBox.setAlignment(Pos.CENTER);
+
+            // 1. Manage Button (Blue)
+            Button manageButton = new Button("Manage");
+            manageButton.setStyle(
+                    "-fx-background-color: #1e90ff;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            );
+            manageButton.setOnMouseEntered(e -> manageButton.setStyle(
+                    "-fx-background-color: #0f74e0;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
+            manageButton.setOnMouseExited(e -> manageButton.setStyle(
+                    "-fx-background-color: #1e90ff;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
             manageButton.setOnAction(e -> showLecturerCourseView(course));
 
-            courseCard.getChildren().addAll(code, name, progress, manageButton);
+            // 2. Edit Button (Yellow)
+            Button editButton = new Button("Edit");
+            editButton.setStyle(
+                    "-fx-background-color: #ffc107;" +
+                            "-fx-text-fill: #212529;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            );
+            editButton.setOnMouseEntered(e -> editButton.setStyle(
+                    "-fx-background-color: #e0a800;" +
+                            "-fx-text-fill: #212529;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
+            editButton.setOnMouseExited(e -> editButton.setStyle(
+                    "-fx-background-color: #ffc107;" +
+                            "-fx-text-fill: #212529;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
+            editButton.setOnAction(e -> editCourse(course));
 
-            // Add hover effect
+            // 3. Delete Button (Red)
+            Button deleteButton = new Button("Delete");
+            deleteButton.setStyle(
+                    "-fx-background-color: #dc3545;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            );
+            deleteButton.setOnMouseEntered(e -> deleteButton.setStyle(
+                    "-fx-background-color: #c82333;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
+            deleteButton.setOnMouseExited(e -> deleteButton.setStyle(
+                    "-fx-background-color: #dc3545;" +
+                            "-fx-text-fill: white;" +
+                            "-fx-font-weight: bold;" +
+                            "-fx-background-radius: 6;" +
+                            "-fx-padding: 6 12 6 12;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-cursor: hand;"
+            ));
+            deleteButton.setOnAction(e -> deleteCourse(course));
+
+            buttonBox.getChildren().addAll(manageButton, editButton, deleteButton);
+            courseCard.getChildren().addAll(code, name, progress, buttonBox);
+
+            // Hover effect for the entire card
             courseCard.setOnMouseEntered(e -> {
-                courseCard.setStyle("-fx-background-color: #f8f9fa; -fx-background-radius: 8px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 0, 4, 6, 0);");
+                courseCard.setStyle("-fx-background-color: #f8f9fa; -fx-background-radius: 8px; " +
+                        "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 0, 4, 6, 0);");
             });
-
             courseCard.setOnMouseExited(e -> {
-                courseCard.setStyle("-fx-background-color: white; -fx-background-radius: 8px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 2, 4, 0);");
+                courseCard.setStyle("-fx-background-color: white; -fx-background-radius: 8px; " +
+                        "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 2, 4, 0);");
             });
 
             coursesGrid.getChildren().add(courseCard);
@@ -1841,6 +3729,172 @@ public class HelloController extends Application {
         content.getChildren().addAll(title, coursesGrid);
         coursesTab.setContent(new ScrollPane(content));
     }
+
+    private void editCourse(Course course) {
+        // Create edit dialog
+        Dialog<Pair<String, String>> dialog = new Dialog<>();
+        dialog.setTitle("Edit Course");
+        dialog.setHeaderText("Editing: " + course.getCourseCode());
+
+        // Set buttons
+        ButtonType saveButtonType = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+
+        // Create form
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(20));
+
+        TextField codeField = new TextField(course.getCourseCode());
+        TextField nameField = new TextField(course.getCourseName());
+
+        grid.add(new Label("Course Code:"), 0, 0);
+        grid.add(codeField, 1, 0);
+        grid.add(new Label("Course Name:"), 0, 1);
+        grid.add(nameField, 1, 1);
+
+        dialog.getDialogPane().setContent(grid);
+
+        // Convert result to Pair when Save clicked
+        dialog.setResultConverter(dialogButton -> {
+            if (dialogButton == saveButtonType) {
+                return new Pair<>(codeField.getText(), nameField.getText());
+            }
+            return null;
+        });
+
+        Optional<Pair<String, String>> result = dialog.showAndWait();
+
+        result.ifPresent(newValues -> {
+            String newCode = newValues.getKey();
+            String newName = newValues.getValue();
+
+            if (newCode.isEmpty() || newName.isEmpty()) {
+                showAlert("Error", "Course code and name cannot be empty");
+                return;
+            }
+
+            try (Connection conn = getConnection()) {
+                // Begin transaction
+                conn.setAutoCommit(false);
+
+                try {
+                    // Update course
+                    String updateQuery = "UPDATE courses SET course_code = ?, course_name = ? WHERE course_code = ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(updateQuery)) {
+                        pstmt.setString(1, newCode);
+                        pstmt.setString(2, newName);
+                        pstmt.setString(3, course.getCourseCode());
+                        int rowsAffected = pstmt.executeUpdate();
+
+                        if (rowsAffected > 0) {
+                            // Update all references if course code changed
+                            if (!newCode.equals(course.getCourseCode())) {
+                                updateCourseReferences(conn, course.getCourseCode(), newCode);
+                            }
+
+                            // Update the course object
+                            course.setCourseCode(newCode);
+                            course.setCourseName(newName);
+
+                            // Commit transaction
+                            conn.commit();
+
+                            showAlert("Success", "Course updated successfully");
+                            setupLecturerDashboard(); // Refresh view
+                        } else {
+                            conn.rollback();
+                            showAlert("Error", "Failed to update course");
+                        }
+                    }
+                } catch (SQLException e) {
+                    conn.rollback();
+                    showAlert("Error", "Failed to update course: " + e.getMessage());
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            } catch (SQLException e) {
+                showAlert("Error", "Database error: " + e.getMessage());
+            }
+        });
+    }
+
+    private void updateCourseReferences(Connection conn, String oldCode, String newCode) throws SQLException {
+        String[] tables = {"enrollments", "assignments", "announcements", "course_materials", "submissions", "transcripts", "certifications"};
+
+        for (String table : tables) {
+            try {
+                String updateQuery = "UPDATE " + table + " SET course_code = ? WHERE course_code = ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(updateQuery)) {
+                    pstmt.setString(1, newCode);
+                    pstmt.setString(2, oldCode);
+                    pstmt.executeUpdate();
+                }
+            } catch (SQLException e) {
+                // Log but continue with other tables
+                System.err.println("Warning: Failed to update references in " + table + ": " + e.getMessage());
+            }
+        }
+    }
+
+    private void deleteCourse(Course course) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Confirm Deletion");
+        confirm.setHeaderText("Delete Course: " + course.getCourseCode());
+        confirm.setContentText("This will permanently delete the course and all associated data. Continue?");
+
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            try (Connection conn = getConnection()) {
+                conn.setAutoCommit(false);
+
+                try {
+                    // First delete dependent records
+                    String[] tables = {"enrollments", "assignments", "announcements",
+                            "course_materials", "submissions", "transcripts", "certifications"};
+
+                    for (String table : tables) {
+                        try {
+                            String deleteQuery = "DELETE FROM " + table + " WHERE course_code = ?";
+                            try (PreparedStatement pstmt = conn.prepareStatement(deleteQuery)) {
+                                pstmt.setString(1, course.getCourseCode());
+                                pstmt.executeUpdate();
+                            }
+                        } catch (SQLException e) {
+                            System.err.println("Warning: Failed to delete from " + table + ": " + e.getMessage());
+                        }
+                    }
+
+                    // Then delete the course
+                    String deleteCourseQuery = "DELETE FROM courses WHERE course_code = ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(deleteCourseQuery)) {
+                        pstmt.setString(1, course.getCourseCode());
+                        int rows = pstmt.executeUpdate();
+
+                        if (rows > 0) {
+                            conn.commit();
+                            lecturerCourses.remove(course);
+                            showAlert("Success", "Course deleted successfully");
+                            setupLecturerDashboard(); // Refresh view
+                        } else {
+                            conn.rollback();
+                            showAlert("Error", "Failed to delete course");
+                        }
+                    }
+                } catch (SQLException e) {
+                    conn.rollback();
+                    showAlert("Error", "Failed to delete course: " + e.getMessage());
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            } catch (SQLException e) {
+                showAlert("Error", "Database error: " + e.getMessage());
+            }
+        }
+    }
+
+
 
     private void setupManagementTab(Tab managementTab) {
         VBox content = new VBox(20);
@@ -1902,6 +3956,7 @@ public class HelloController extends Application {
         content.getChildren().addAll(title, form, addButton);
         managementTab.setContent(new ScrollPane(content));
     }
+
 
     private void setupGradingTab(Tab gradingTab) {
         VBox content = new VBox(20);
@@ -2750,15 +4805,19 @@ public class HelloController extends Application {
     public static class DatabaseUtil {
         static final Logger logger = Logger.getLogger(DatabaseUtil.class.getName());
 
-        public static Connection getConnection() throws SQLException {
+        private static Connection getConnection() throws SQLException {
             try {
-                return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+                Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+                System.out.println("Database connection established successfully");
+                return conn;
             } catch (SQLException e) {
-                logger.severe("Database connection failed: " + e.getMessage());
+                System.err.println("Database connection failed:");
+                System.err.println("URL: " + DB_URL);
+                System.err.println("User: " + DB_USER);
+                e.printStackTrace();
                 throw e;
             }
         }
-
         public static <T> T executeQuery(String sql, SQLFunction<PreparedStatement, T> processor) {
             try (Connection conn = getConnection();
                  PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -2905,6 +4964,169 @@ class CourseMaterial {
     public String getFilePath() { return filePath; }
     public String getCourseCode() { return courseCode; }
     public String getUploadDate() { return uploadDate; }
+}
+class ForumCategory {
+    private final int id;
+    private final String name;
+    private final String description;
+    private final LocalDateTime createdAt;
+
+    public ForumCategory(int id, String name, String description, LocalDateTime createdAt) {
+        this.id = id;
+        this.name = name;
+        this.description = description;
+        this.createdAt = createdAt;
+    }
+
+    // Getters
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public String getDescription() { return description; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+}
+// Add this class to your model classes
+class ShortAnswerQuestion {
+    private final int id;
+    private final String questionText;
+    private final String courseCode;
+
+    public ShortAnswerQuestion(int id, String questionText, String courseCode) {
+        this.id = id;
+        this.questionText = questionText;
+        this.courseCode = courseCode;
+    }
+
+    public int getId() { return id; }
+    public String getQuestionText() { return questionText; }
+    public String getCourseCode() { return courseCode; }
+}
+class ForumPost {
+    private final int id;
+    private final int categoryId;
+    private final int userId;
+    private final String userName;
+    private final String title;
+    private final String content;
+    private final String mediaPath;
+    private final String mediaType;
+    private final LocalDateTime createdAt;
+    private final LocalDateTime updatedAt;
+
+    public ForumPost(int id, int categoryId, int userId, String userName, String title,
+                     String content, String mediaPath, String mediaType,
+                     LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.id = id;
+        this.categoryId = categoryId;
+        this.userId = userId;
+        this.userName = userName;
+        this.title = title;
+        this.content = content;
+        this.mediaPath = mediaPath;
+        this.mediaType = mediaType;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+
+    // Getters
+    public int getId() { return id; }
+    public int getCategoryId() { return categoryId; }
+    public int getUserId() { return userId; }
+    public String getUserName() { return userName; }
+    public String getTitle() { return title; }
+    public String getContent() { return content; }
+    public String getMediaPath() { return mediaPath; }
+    public String getMediaType() { return mediaType; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+}
+class MCQQuestion {
+    private final int id;
+    private final String questionText;
+    private final String courseCode;
+    private final int createdBy;
+    private final LocalDateTime createdAt;
+    private final List<MCQOption> options;
+
+    public MCQQuestion(int id, String questionText, String courseCode,
+                       int createdBy, LocalDateTime createdAt) {
+        this.id = id;
+        this.questionText = questionText;
+        this.courseCode = courseCode;
+        this.createdBy = createdBy;
+        this.createdAt = createdAt;
+        this.options = new ArrayList<>();
+    }
+
+    // Getters
+    public int getId() { return id; }
+    public String getQuestionText() { return questionText; }
+    public String getCourseCode() { return courseCode; }
+    public int getCreatedBy() { return createdBy; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public List<MCQOption> getOptions() { return options; }
+
+    public void addOption(MCQOption option) {
+        options.add(option);
+    }
+}
+
+class MCQOption {
+    private final int id;
+    private final int questionId;
+    private final String optionText;
+    private final boolean isCorrect;
+
+    public MCQOption(int id, int questionId, String optionText, boolean isCorrect) {
+        this.id = id;
+        this.questionId = questionId;
+        this.optionText = optionText;
+        this.isCorrect = isCorrect;
+    }
+
+    // Getters
+    public int getId() { return id; }
+    public int getQuestionId() { return questionId; }
+    public String getOptionText() { return optionText; }
+    public boolean isCorrect() { return isCorrect; }
+}
+class ForumComment {
+    private final int id;
+    private final int postId;
+    private final int userId;
+    private final String userName;
+    private final String content;
+    private final LocalDateTime createdAt;
+
+    public ForumComment(int id, int postId, int userId, String userName,
+                        String content, LocalDateTime createdAt) {
+        this.id = id;
+        this.postId = postId;
+        this.userId = userId;
+        this.userName = userName;
+        this.content = content;
+        this.createdAt = createdAt;
+    }
+
+    // Getters
+    public int getId() { return id; }
+    public int getPostId() { return postId; }
+    public int getUserId() { return userId; }
+    public String getUserName() { return userName; }
+    public String getContent() { return content; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+}
+// Represents a question for assessment
+class AssessmentQuestion {
+    private final int id;
+    private final String question;
+
+    public AssessmentQuestion(int id, String question) {
+        this.id = id;
+        this.question = question;
+    }
+
+    public int getId() { return id; }
+    public String getQuestion() { return question; }
 }
 
 class Submission {
